@@ -1,4 +1,4 @@
-import { useState, useContext, React, useEffect } from "react";
+import React, { useState, useContext, useEffect } from "react";
 import { formatPrice } from "../../formatter.js";
 import {
   EventAvailable,
@@ -54,6 +54,26 @@ import api from "../../api/axios.js";
 import toast from "react-hot-toast";
 
 const Home = () => {
+  const BACKEND_URL = "http://localhost:5000";
+
+  const getImageUrl = (image) => {
+    if (!image) {
+      return "";
+    }
+
+    // External image URL
+    if (image.startsWith("http://") || image.startsWith("https://")) {
+      return image;
+    }
+
+    // Image uploaded to our backend
+    if (image.startsWith("/uploads/")) {
+      return `${BACKEND_URL}${image}`;
+    }
+
+    return image;
+  };
+
   const history = useHistory();
   const { mood } = useContext(MoodContext);
 
@@ -89,14 +109,18 @@ const Home = () => {
   const fetchHotels = async () => {
     try {
       setLoading(true);
-      const response = await api.get("/HotelDatas");
-      // Safety check: Backend se data array hi aaye
-      const fetchedData = response.data.Data || response.data || [];
+
+      // Fetch hotels from our new StayFlow backend
+      const response = await api.get("/hotels");
+
+      // Backend response contains the hotels array
+      const fetchedData = response.data.hotels || [];
+
       setHotels(fetchedData);
     } catch (error) {
       console.error("Error fetching hotels:", error);
-      toast.error("Failed to load hotels");
-      setHotels([]);
+
+      toast.error("Failed to load hotels.");
     } finally {
       setLoading(false);
     }
@@ -140,17 +164,14 @@ const Home = () => {
 
       categories.forEach((cat, index) => {
         // Isme hum check kar rahe hain ki category match ho rahi hai ya nahi
-        const catHotels = filteredBySearch.filter(
-          (h) => h.category?.toLowerCase().trim() === cat,
-        );
+        const catHotels = filteredBySearch.filter((h) => h.category?.toLowerCase().trim() === cat);
 
         if (index < 4) {
           // Nature, Urban, Ocean, Romantic se 1-1 photo
           if (catHotels.length > 0) defaultSelection.push(catHotels[0]);
         } else {
           // Royal se 2 photos
-          if (catHotels.length > 0)
-            defaultSelection.push(...catHotels.slice(0, 2));
+          if (catHotels.length > 0) defaultSelection.push(...catHotels.slice(0, 2));
         }
       });
 
@@ -180,46 +201,73 @@ const Home = () => {
 
   // --- 5. Booking Handler ---
   const handleQuickBook = async () => {
-    const userData = JSON.parse(localStorage.getItem("user"));
-    if (!userData) {
-      toast.error("Please login to book a hotel!");
-      return;
-    }
-    if (!checkIn || !checkOut) {
-      toast.error("Please select both dates!");
-      return;
-    }
-
-    setIsBooked(true);
-    const formData = new FormData();
-
     try {
-      // Image Handling: Agar URL hai toh fetch karke blob banao
-      let imageBlob = null;
-      if (selectedHotel?.image) {
-        const imageResponse = await fetch(selectedHotel.image);
-        imageBlob = await imageResponse.blob();
+      setIsBooked(true);
+      // Get logged-in user information
+      const storedUser = localStorage.getItem("user");
+
+      if (!storedUser) {
+        toast.error("Please login before booking.");
+        history.push("/login");
+        return;
       }
 
-      formData.append("customerName", userData.displayName || userData.email);
-      formData.append("hotelName", selectedHotel?.name);
-      formData.append("checkIn", checkIn);
-      formData.append("checkOut", checkOut);
-      formData.append("amount", Number(finalAmount));
-      formData.append("status", "pending");
+      const user = JSON.parse(storedUser);
 
-      formData.append("hotelImage", imageBlob, "hotel_image.jpg");
+      // Validate dates
+      const checkInDate = new Date(checkIn);
+      const checkOutDate = new Date(checkOut);
 
-      await api.post("/Bookingssystem", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      if (checkOutDate <= checkInDate) {
+        toast.error("Check-out date must be after check-in date.");
+        return;
+      }
+
+      if (!selectedHotel) {
+        toast.error("Please select a hotel.");
+        return;
+      }
+
+      // Prepare booking data
+      const bookingData = {
+        hotel: selectedHotel._id,
+
+        // Display information
+        customerName: user.name || user.email || "Guest",
+        hotelName: selectedHotel.name,
+
+        // Backend image path / URL
+        hotelImage: getImageUrl(selectedHotel.image || selectedHotel.img),
+
+        // Booking dates
+        checkIn,
+        checkOut,
+
+        // Final calculated amount
+        amount: Number(finalAmount),
+
+        // Initial booking status
+        status: "pending",
+      };
+
+      console.log("Booking data:", bookingData);
+
+      // Send booking to our new backend
+      // JWT is automatically attached by Axios interceptor
+      await api.post("/bookings", bookingData);
 
       toast.success("Booking Successfully!");
+
       setOpen(false);
-      setTimeout(() => history.push("/bookings"), 1000);
+
+      // Redirect to user's bookings
+      history.push("/bookings");
     } catch (error) {
-      console.error("Booking Error:", error);
-      toast.error("Booking failed. Try again.");
+      console.error("Booking error:", error);
+
+      const message = error.response?.data?.message || "Booking failed. Please try again.";
+
+      toast.error(message);
     } finally {
       setIsBooked(false);
     }
@@ -360,9 +408,7 @@ const Home = () => {
               >
                 Find Your Perfect{" "}
                 <span style={{ color: getMoodColor(mood) }}>
-                  {mood === "default"
-                    ? "Dream"
-                    : mood.charAt(0).toUpperCase() + mood.slice(1)}
+                  {mood === "default" ? "Dream" : mood.charAt(0).toUpperCase() + mood.slice(1)}
                 </span>{" "}
                 Stay
               </Typography>
@@ -389,8 +435,7 @@ const Home = () => {
                 >
                   {mood === "default" &&
                     "From hidden gems to iconic landmarks, discover stays that match your vibe."}
-                  {mood === "nature" &&
-                    "Escape the noise and breathe in the fresh mountain air."}
+                  {mood === "nature" && "Escape the noise and breathe in the fresh mountain air."}
                   {mood === "urban" &&
                     "Stay in the heart of the action, where the city never sleeps."}
                   {mood === "ocean" &&
@@ -475,9 +520,7 @@ const Home = () => {
               fontWeight="900"
               sx={{
                 mb: 2,
-                background: `linear-gradient(45deg, #1a1a1a, ${getMoodColor(
-                  mood,
-                )})`,
+                background: `linear-gradient(45deg, #1a1a1a, ${getMoodColor(mood)})`,
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
                 backgroundClip: "text",
@@ -496,8 +539,7 @@ const Home = () => {
                 fontSize: { xs: "1.1rem", md: "1.25rem" },
               }}
             >
-              Discover the most loved getaways, handpicked for unforgettable
-              experiences
+              Discover the most loved getaways, handpicked for unforgettable experiences
             </Typography>
 
             {/* Decorative line */}
@@ -592,7 +634,7 @@ const Home = () => {
                     <Box sx={{ position: "relative", height: "220px" }}>
                       <CardMedia
                         component="img"
-                        image={hotel.image || hotel.img}
+                        src={getImageUrl(hotel.image || hotel.img)}
                         sx={{
                           height: "100%",
                           objectFit: "cover",
@@ -641,11 +683,7 @@ const Home = () => {
                       </Stack>
 
                       {/* ------------- Amenities ------------- */}
-                      <Stack
-                        direction="row"
-                        spacing={3}
-                        sx={{ my: 1, color: "text.secondary" }}
-                      >
+                      <Stack direction="row" spacing={3} sx={{ my: 1, color: "text.secondary" }}>
                         {/* Wifi Icon */}
                         <Box
                           sx={{
@@ -682,10 +720,7 @@ const Home = () => {
                             gap: 0.5,
                           }}
                         >
-                          <AcUnit
-                            fontSize="small"
-                            sx={{ fontSize: "1.1rem" }}
-                          />
+                          <AcUnit fontSize="small" sx={{ fontSize: "1.1rem" }} />
                           <Typography variant="caption" fontWeight="500">
                             AC
                           </Typography>
@@ -846,11 +881,7 @@ const Home = () => {
                       </IconButton>
 
                       <img
-                        src={
-                          selectedHotel.image ||
-                          selectedHotel.img ||
-                          "https://images.unsplash.com/photo-1611892440504-42a792e24d32?w=800"
-                        }
+                        src={getImageUrl(selectedHotel.image || selectedHotel.img)}
                         alt={selectedHotel.name}
                         style={{
                           width: "100%",
@@ -877,12 +908,8 @@ const Home = () => {
                         }}
                       >
                         <Star sx={{ color: "#FFB300", fontSize: "1.2rem" }} />
-                        <Typography
-                          variant="subtitle1"
-                          fontWeight="800"
-                          sx={{ color: "#2d3748" }}
-                        >
-                          {selectedHotel.rating}
+                        <Typography variant="subtitle1" fontWeight="800" sx={{ color: "#2d3748" }}>
+                          {selectedHotel.rate ?? 0}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
                           (24 reviews)
@@ -908,7 +935,7 @@ const Home = () => {
                       >
                         <LocationOn sx={{ color: themeColor }} />
                         <Typography variant="body1" fontWeight="500">
-                          {selectedHotel.loc}
+                          {selectedHotel.location}
                         </Typography>
                       </Stack>
 
@@ -932,8 +959,7 @@ const Home = () => {
                             gap: 1,
                           }}
                         >
-                          <EventAvailable sx={{ color: themeColor }} /> Your
-                          Trip
+                          <EventAvailable sx={{ color: themeColor }} /> Your Trip
                         </Typography>
 
                         <Grid container spacing={2}>
@@ -951,9 +977,7 @@ const Home = () => {
                             >
                               <Typography
                                 inputProps={{
-                                  min:
-                                    checkIn ||
-                                    new Date().toISOString().split("T")[0],
+                                  min: checkIn || new Date().toISOString().split("T")[0],
                                 }}
                                 variant="caption"
                                 fontWeight="700"
@@ -964,9 +988,7 @@ const Home = () => {
                               </Typography>
                               <TextField
                                 inputProps={{
-                                  min:
-                                    checkIn ||
-                                    new Date().toISOString().split("T")[0],
+                                  min: checkIn || new Date().toISOString().split("T")[0],
                                 }}
                                 type="date"
                                 fullWidth
@@ -1008,9 +1030,7 @@ const Home = () => {
                               <TextField
                                 type="date"
                                 inputProps={{
-                                  min:
-                                    checkIn ||
-                                    new Date().toISOString().split("T")[0],
+                                  min: checkIn || new Date().toISOString().split("T")[0],
                                 }} // User purani date select nahi kar payega
                                 fullWidth
                                 variant="standard"
@@ -1074,11 +1094,7 @@ const Home = () => {
 
                       {/* 4. AMENITIES (Clean Cards) */}
                       <Box sx={{ mb: 5 }}>
-                        <Typography
-                          variant="h6"
-                          fontWeight="800"
-                          sx={{ mb: 3 }}
-                        >
+                        <Typography variant="h6" fontWeight="800" sx={{ mb: 3 }}>
                           What this place offers
                         </Typography>
                         <Grid container spacing={2}>
@@ -1101,8 +1117,7 @@ const Home = () => {
                                   border: "1px solid #f1f5f9",
                                   textAlign: "center",
                                   // cursor: "pointer",
-                                  transition:
-                                    "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                                  transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
                                   "&:hover": {
                                     transform: "translateY(-4px)",
                                     boxShadow: "0 10px 20px rgba(0,0,0,0.05)",
@@ -1113,11 +1128,7 @@ const Home = () => {
                                 <Typography variant="h5" sx={{ mb: 1 }}>
                                   {item.emoji}
                                 </Typography>
-                                <Typography
-                                  variant="body2"
-                                  fontWeight="600"
-                                  color="text.secondary"
-                                >
+                                <Typography variant="body2" fontWeight="600" color="text.secondary">
                                   {item.label}
                                 </Typography>
                               </Box>
@@ -1143,30 +1154,14 @@ const Home = () => {
                       borderTop: "1px solid rgba(0,0,0,0.05)",
                     }}
                   >
-                    <Grid
-                      container
-                      alignItems="center"
-                      justifyContent="space-between"
-                    >
+                    <Grid container alignItems="center" justifyContent="space-between">
                       <Grid item xs={6}>
                         <Stack>
-                          <Stack
-                            direction="row"
-                            alignItems="baseline"
-                            spacing={0.5}
-                          >
-                            <Typography
-                              variant="h4"
-                              fontWeight="900"
-                              sx={{ color: "#1a202c" }}
-                            >
+                          <Stack direction="row" alignItems="baseline" spacing={0.5}>
+                            <Typography variant="h4" fontWeight="900" sx={{ color: "#1a202c" }}>
                               {formatPrice(finalAmount)}
                             </Typography>
-                            <Typography
-                              variant="body2"
-                              color="text.secondary"
-                              fontWeight="600"
-                            >
+                            <Typography variant="body2" color="text.secondary" fontWeight="600">
                               / {calculatedNights} nights
                             </Typography>
                           </Stack>
@@ -1190,17 +1185,13 @@ const Home = () => {
                           variant="contained"
                           fullWidth
                           onClick={() => {
-                            // 1. LocalStorage se real-time check karo ki user logged in hai ya nahi
-                            const userIsLoggedIn =
-                              localStorage.getItem("isLoggedIn") === "true";
-                            if (!userIsLoggedIn) {
-                              // Agar login nahi hai, toh message dikhao aur signup page par bhej do
-                              alert("Please first sign up to book your stay!");
-                              history.push("/signup");
-                            } else {
-                              // Agar login hai, tabhi booking confirm hogi
-                              handleQuickBook();
+                            const token = localStorage.getItem("token");
+                            if (!token) {
+                              toast.error("Please login before booking.");
+                              history.push("/login");
+                              return;
                             }
+                            handleQuickBook();
                           }}
                           sx={{
                             bgcolor: themeColor,
@@ -1231,16 +1222,8 @@ const Home = () => {
                     justifyContent: "center",
                   }}
                 >
-                  <CircularProgress
-                    size={50}
-                    thickness={4}
-                    sx={{ color: themeColor, mb: 3 }}
-                  />
-                  <Typography
-                    variant="h6"
-                    fontWeight="600"
-                    color="text.secondary"
-                  >
+                  <CircularProgress size={50} thickness={4} sx={{ color: themeColor, mb: 3 }} />
+                  <Typography variant="h6" fontWeight="600" color="text.secondary">
                     Finding the best rates...
                   </Typography>
                 </Box>
@@ -1524,9 +1507,7 @@ const Home = () => {
               sx={{
                 mb: 3,
                 fontSize: { xs: "2.5rem", md: "3.5rem" },
-                background: `linear-gradient(45deg, ${getMoodColor(
-                  mood,
-                )}, #1a1a1a)`,
+                background: `linear-gradient(45deg, ${getMoodColor(mood)}, #1a1a1a)`,
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
                 backgroundClip: "text",
@@ -1545,56 +1526,45 @@ const Home = () => {
                 lineHeight: 1.6,
               }}
             >
-              We're not just another booking platform. Here's what makes us
-              different.
+              We're not just another booking platform. Here's what makes us different.
             </Typography>
           </Box>
-          <Grid
-            container
-            spacing={4}
-            sx={{ alignItems: "stretch", justifyContent: "center" }}
-          >
+          <Grid container spacing={4} sx={{ alignItems: "stretch", justifyContent: "center" }}>
             {[
               {
                 icon: "🏆",
                 title: "Best Price Guarantee",
-                description:
-                  "Find lower price elsewhere? We'll match and give 110% back!",
+                description: "Find lower price elsewhere? We'll match and give 110% back!",
                 color: "#FFB300",
               },
               {
                 icon: "💯",
                 title: "100% Verified Stays",
-                description:
-                  "Every property personally verified for quality, safety.",
+                description: "Every property personally verified for quality, safety.",
                 color: "#4CAF50",
               },
               {
                 icon: "🔒",
                 title: "Secure & Safe Bookings",
-                description:
-                  "Bank-level encryption protects your personal information.",
+                description: "Bank-level encryption protects your personal information.",
                 color: "#2196F3",
               },
               {
                 icon: "⭐",
                 title: "4.8+ Traveler Rating",
-                description:
-                  "Rated excellent by 10,000+ travelers for exceptional service.",
+                description: "Rated excellent by 10,000+ travelers for exceptional service.",
                 color: "#FF9800",
               },
               {
                 icon: "🎯",
                 title: "Perfect Mood Matching",
-                description:
-                  "AI-powered mood matching finds your ideal based preferences.",
+                description: "AI-powered mood matching finds your ideal based preferences.",
                 color: getMoodColor(mood),
               },
               {
                 icon: "🛡️",
                 title: "24/7 Customer Support",
-                description:
-                  "Round-the-clock assistance for any queries or emergencies.",
+                description: "Round-the-clock assistance for any queries or emergencies.",
                 color: "#9C27B0",
               },
             ].map((feature, index) => (
@@ -1705,9 +1675,7 @@ const Home = () => {
                 sx={{
                   mb: 3,
                   fontSize: { xs: "2.5rem", md: "3.5rem" },
-                  background: `linear-gradient(45deg, #1a1a1a, ${getMoodColor(
-                    mood,
-                  )})`,
+                  background: `linear-gradient(45deg, #1a1a1a, ${getMoodColor(mood)})`,
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
                   backgroundClip: "text",
@@ -1726,8 +1694,7 @@ const Home = () => {
                   lineHeight: 1.6,
                 }}
               >
-                Don't just take our word for it. Here's what our travelers have
-                to say.
+                Don't just take our word for it. Here's what our travelers have to say.
               </Typography>
             </Box>
 
@@ -1799,10 +1766,7 @@ const Home = () => {
                     {/* Stars */}
                     <Box sx={{ display: "flex", mb: 3 }}>
                       {[...Array(testimonial.rating)].map((_, i) => (
-                        <Star
-                          key={i}
-                          sx={{ color: "#FFB300", fontSize: "1.2rem", mr: 0.5 }}
-                        />
+                        <Star key={i} sx={{ color: "#FFB300", fontSize: "1.2rem", mr: 0.5 }} />
                       ))}
                     </Box>
 
@@ -1865,16 +1829,9 @@ const Home = () => {
 
                     {/* Stay Details */}
                     <Box sx={{ mt: 3, pt: 3, borderTop: "1px solid #f5f5f5" }}>
-                      <Typography
-                        variant="caption"
-                        fontWeight="600"
-                        color="text.secondary"
-                      >
+                      <Typography variant="caption" fontWeight="600" color="text.secondary">
                         Stayed at:{" "}
-                        <Box
-                          component="span"
-                          sx={{ color: getMoodColor(mood) }}
-                        >
+                        <Box component="span" sx={{ color: getMoodColor(mood) }}>
                           {testimonial.stay}
                         </Box>
                       </Typography>
@@ -1915,18 +1872,10 @@ const Home = () => {
                 { value: "24/7", label: "Support Available", icon: "🛡️" },
               ].map((stat, idx) => (
                 <Box key={idx}>
-                  <Typography
-                    variant="h3"
-                    fontWeight="900"
-                    sx={{ color: getMoodColor(mood) }}
-                  >
+                  <Typography variant="h3" fontWeight="900" sx={{ color: getMoodColor(mood) }}>
                     {stat.icon} {stat.value}
                   </Typography>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ mt: 1 }}
-                  >
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                     {stat.label}
                   </Typography>
                 </Box>

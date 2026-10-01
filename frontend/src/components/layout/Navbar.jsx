@@ -41,7 +41,7 @@ import {
 import InfoIcon from "@mui/icons-material/Info";
 import { useHistory, useLocation } from "react-router-dom";
 import { ArrowForward } from "@mui/icons-material";
-import Destination from "../../pages/client/Destination";
+// import Destination from "../../pages/client/Destination";
 
 const navItems = [
   { label: "Home", path: "/", icon: <Home /> },

@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { Formik, Form, Field } from "formik";
+
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
+
 import {
   Box,
   Typography,
@@ -18,11 +20,12 @@ import {
   IconButton,
   Modal,
   TextField,
-  MenuItem, // Added MenuItem
+  MenuItem,
   useTheme,
   Skeleton,
   useMediaQuery,
 } from "@mui/material";
+
 import toast from "react-hot-toast";
 import api from "../../api/axios";
 import * as Yup from "yup";
@@ -37,14 +40,40 @@ const AdminHotel = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
+  // Backend server URL.
+  // MongoDB stores uploaded images like:
+  // /uploads/filename.jpg
+  // So React needs to convert that into:
+  // http://localhost:5000/uploads/filename.jpg
+  const BACKEND_URL = "http://localhost:5000";
+
+  const getImageUrl = (image) => {
+    if (!image) return "";
+
+    // Already a complete URL
+    if (image.startsWith("http://") || image.startsWith("https://")) {
+      return image;
+    }
+
+    // Backend uploaded image
+    if (image.startsWith("/uploads/")) {
+      return `${BACKEND_URL}${image}`;
+    }
+
+    return image;
+  };
+
+  // Form validation
   const validationSchema = Yup.object({
     name: Yup.string().required("Hotel name is required"),
+
     location: Yup.string().required("Location is required"),
-    price: Yup.number().positive().required("Price is required"),
-    category: Yup.string().required("Category is required"), // Added validation for category
+
+    price: Yup.number().positive("Price must be greater than 0").required("Price is required"),
+
+    category: Yup.string().required("Category is required"),
   });
 
-  const TOKEN = "ngXSnLPrB0vbLvNA";
   const initialValues = {
     name: "",
     location: "",
@@ -54,95 +83,177 @@ const AdminHotel = () => {
     category: "",
   };
 
+  // Fetch hotels when page loads
   useEffect(() => {
     getData();
   }, []);
 
-  const getData = () => {
-    setLoading(true); // Fetch shuru hote hi true
-    api
-      .get("/HotelDatas")
-      .then((res) => {
-        setList(res.data.Data || []);
-        setLoading(false); // Data milne par false
-      })
-      .catch((err) => {
-        console.log("GET Error:", err.message);
-        setLoading(false); // Error aaye tab bhi false taaki skeleton hate
-      });
+  // GET /api/hotels
+  const getData = async () => {
+    try {
+      setLoading(true);
+
+      const response = await api.get("/hotels");
+
+      // Our backend returns:
+      // {
+      //   success: true,
+      //   count: ...,
+      //   hotels: [...]
+      // }
+      setList(response.data.hotels || []);
+    } catch (error) {
+      console.error("GET Hotels Error:", error);
+
+      toast.error(error.response?.data?.message || "Failed to load hotels.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const displayPrice = (p) => Number(p || 0) * 90;
+  // Existing pricing logic preserved.
+  const displayPrice = (price) => {
+    return Number(price || 0) * 90;
+  };
 
-  const handleSubmit = (values, { resetForm }) => {
-    const toastId = toast.loading("Processing...");
-    const formData = new FormData();
+  // Add / Update hotel
+  const handleSubmit = async (values, { resetForm }) => {
+    const toastId = toast.loading(editData ? "Updating hotel..." : "Adding hotel...");
 
-    Object.keys(values).forEach((key) => {
-      if (key === "image") {
-        if (values[key] instanceof File) formData.append(key, values[key]);
-      } else {
-        formData.append(key, values[key] || "");
+    try {
+      const formData = new FormData();
+
+      // Normal text fields
+      formData.append("name", values.name);
+      formData.append("location", values.location);
+      formData.append("price", values.price);
+      formData.append("status", values.status);
+      formData.append("category", values.category);
+
+      // Only append image if a new File was selected.
+      // During edit, if the user doesn't select a new image,
+      // backend will keep the existing image.
+      if (values.image instanceof File) {
+        formData.append("image", values.image);
       }
-    });
 
-    const url = editData
-      ? `/HotelDatas/${editData._id}?Authorization=${TOKEN}`
-      : `/HotelDatas?Authorization=${TOKEN}`;
+      if (editData) {
+        // PATCH /api/hotels/:id
+        await api.patch(`/hotels/${editData._id}`, formData);
 
-    api({ method: editData ? "patch" : "post", url, data: formData })
-      .then(() => {
-        toast.success(editData ? "Updated!" : "Added!", { id: toastId });
-        finalize(resetForm);
-      })
-      .catch((err) => toast.error("Action Failed", { id: toastId }));
-  };
+        toast.success("Hotel updated successfully!", {
+          id: toastId,
+        });
+      } else {
+        // POST /api/hotels
+        await api.post("/hotels", formData);
 
-  const finalize = (resetForm) => {
-    setEditData(null);
-    setOpenModal(false);
-    getData();
-    if (resetForm) resetForm();
-  };
+        toast.success("Hotel added successfully!", {
+          id: toastId,
+        });
+      }
 
-  const handleEdit = (item) => {
-    setEditData(item);
-    setOpenModal(true);
-  };
+      // Reset UI and reload hotels
+      finalize(resetForm);
+    } catch (error) {
+      console.error("Hotel action error:", error);
 
-  const handleDelete = (id) => {
-    if (window.confirm("Delete this hotel?")) {
-      api.delete(`/HotelDatas/${id}`).then(() => {
-        toast.success("Deleted!");
-        getData();
+      toast.error(error.response?.data?.message || "Action failed. Please try again.", {
+        id: toastId,
       });
     }
   };
 
+  // Close modal and refresh list
+  const finalize = (resetForm) => {
+    setEditData(null);
+    setOpenModal(false);
+
+    if (resetForm) {
+      resetForm();
+    }
+
+    getData();
+  };
+
+  // Open edit modal
+  const handleEdit = (item) => {
+    setEditData({
+      ...item,
+      // Existing image is a string.
+      // Formik will show it in preview.
+      image: item.image || null,
+    });
+
+    setOpenModal(true);
+  };
+
+  // Delete hotel
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this hotel?")) {
+      return;
+    }
+
+    try {
+      await api.delete(`/hotels/${id}`);
+
+      toast.success("Hotel deleted successfully!");
+
+      getData();
+    } catch (error) {
+      console.error("Delete hotel error:", error);
+
+      toast.error(error.response?.data?.message || "Failed to delete hotel.");
+    }
+  };
+
   return (
-    <Box sx={{ width: "100%", overflowX: "hidden" }}>
+    <Box
+      sx={{
+        width: "100%",
+        overflowX: "hidden",
+      }}
+    >
+      {/* PAGE HEADER */}
       <Stack
-        direction={{ xs: "column", sm: "row" }}
+        direction={{
+          xs: "column",
+          sm: "row",
+        }}
         spacing={2}
         justifyContent="space-between"
-        alignItems={{ xs: "flex-start", sm: "center" }}
+        alignItems={{
+          xs: "flex-start",
+          sm: "center",
+        }}
         mb={4}
       >
         <Typography variant={isMobile ? "h5" : "h4"} fontWeight={800}>
           Manage Hotels
         </Typography>
+
         <Stack
           direction="row"
           spacing={1}
-          sx={{ width: { xs: "100%", sm: "auto" } }}
+          sx={{
+            width: {
+              xs: "100%",
+              sm: "auto",
+            },
+          }}
         >
           <TextField
             fullWidth={isMobile}
             size="small"
             placeholder="Search Hotels..."
+            value={search}
             onChange={(e) => setSearch(e.target.value)}
-            sx={{ bgcolor: "white", borderRadius: "8px" }}
+            sx={{
+              bgcolor: "white",
+              borderRadius: "8px",
+            }}
           />
+
           <Button
             variant="contained"
             startIcon={<AddIcon />}
@@ -150,13 +261,20 @@ const AdminHotel = () => {
               setEditData(null);
               setOpenModal(true);
             }}
-            sx={{ whiteSpace: "nowrap", px: { xs: 2, md: 3 } }}
+            sx={{
+              whiteSpace: "nowrap",
+              px: {
+                xs: 2,
+                md: 3,
+              },
+            }}
           >
             Add
           </Button>
         </Stack>
       </Stack>
 
+      {/* HOTEL TABLE */}
       <TableContainer
         component={Paper}
         sx={{
@@ -169,16 +287,23 @@ const AdminHotel = () => {
           <TableHead sx={{ bgcolor: "#f8fafc" }}>
             <TableRow>
               <TableCell sx={{ fontWeight: 700 }}>Hotel Image</TableCell>
+
               <TableCell sx={{ fontWeight: 700 }}>Hotel Name</TableCell>
+
               <TableCell sx={{ fontWeight: 700 }}>Location</TableCell>
+
               <TableCell sx={{ fontWeight: 700 }}>Price</TableCell>
+
               <TableCell sx={{ fontWeight: 700 }}>Category</TableCell>
+
               <TableCell align="right" sx={{ fontWeight: 700 }}>
                 Actions
               </TableCell>
             </TableRow>
           </TableHead>
+
           <TableBody>
+            {/* LOADING SKELETON */}
             {loading
               ? [...Array(5)].map((_, index) => (
                   <TableRow key={index}>
@@ -187,43 +312,47 @@ const AdminHotel = () => {
                         variant="rectangular"
                         width={50}
                         height={50}
-                        sx={{ borderRadius: "10px" }}
+                        sx={{
+                          borderRadius: "10px",
+                        }}
                       />
                     </TableCell>
+
                     <TableCell>
                       <Skeleton variant="text" width="80%" height={25} />
                     </TableCell>
+
                     <TableCell>
                       <Skeleton variant="text" width="60%" />
                     </TableCell>
+
                     <TableCell>
                       <Skeleton variant="text" width="40%" />
                     </TableCell>
+
                     <TableCell>
                       <Skeleton variant="rounded" width={80} height={25} />
                     </TableCell>
+
                     <TableCell align="right">
-                      <Stack
-                        direction="row"
-                        spacing={1}
-                        justifyContent="flex-end"
-                      >
+                      <Stack direction="row" spacing={1} justifyContent="flex-end">
                         <Skeleton variant="circular" width={30} height={30} />
+
                         <Skeleton variant="circular" width={30} height={30} />
                       </Stack>
                     </TableCell>
                   </TableRow>
                 ))
               : list
-                  .filter((i) =>
-                    i.name?.toLowerCase().includes(search.toLowerCase()),
-                  )
+                  .filter((item) => item.name?.toLowerCase().includes(search.toLowerCase()))
                   .map((row) => (
                     <TableRow key={row._id} hover>
+                      {/* IMAGE */}
                       <TableCell>
                         <Box
                           component="img"
-                          src={row.image}
+                          src={getImageUrl(row.image)}
+                          alt={row.name}
                           sx={{
                             width: 50,
                             height: 50,
@@ -232,15 +361,23 @@ const AdminHotel = () => {
                           }}
                         />
                       </TableCell>
+
+                      {/* NAME */}
                       <TableCell>
                         <Typography fontWeight={600} variant="body2">
                           {row.name}
                         </Typography>
                       </TableCell>
+
+                      {/* LOCATION */}
                       <TableCell>{row.location}</TableCell>
+
+                      {/* PRICE */}
                       <TableCell sx={{ fontWeight: 700 }}>
                         ₹ {displayPrice(row.price).toLocaleString("en-IN")}
                       </TableCell>
+
+                      {/* CATEGORY */}
                       <TableCell>
                         <Box
                           sx={{
@@ -256,12 +393,10 @@ const AdminHotel = () => {
                           {row.category || "N/A"}
                         </Box>
                       </TableCell>
+
+                      {/* ACTIONS */}
                       <TableCell align="right">
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          justifyContent="flex-end"
-                        >
+                        <Stack direction="row" spacing={1} justifyContent="flex-end">
                           <IconButton
                             size="small"
                             onClick={() => handleEdit(row)}
@@ -273,6 +408,7 @@ const AdminHotel = () => {
                           >
                             <EditIcon fontSize="small" />
                           </IconButton>
+
                           <IconButton
                             size="small"
                             onClick={() => handleDelete(row._id)}
@@ -292,9 +428,13 @@ const AdminHotel = () => {
         </Table>
       </TableContainer>
 
+      {/* ADD / EDIT MODAL */}
       <Modal
         open={openModal}
-        onClose={() => setOpenModal(false)}
+        onClose={() => {
+          setOpenModal(false);
+          setEditData(null);
+        }}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -304,12 +444,18 @@ const AdminHotel = () => {
       >
         <Box
           sx={{
-            width: { xs: "100%", sm: 450 },
+            width: {
+              xs: "100%",
+              sm: 450,
+            },
             maxHeight: "90vh",
             overflowY: "auto",
             bgcolor: "background.paper",
             borderRadius: "24px",
-            p: { xs: 3, md: 4 },
+            p: {
+              xs: 3,
+              md: 4,
+            },
             position: "relative",
             outline: "none",
           }}
@@ -327,6 +473,7 @@ const AdminHotel = () => {
             {({ setFieldValue, values, errors, touched, handleChange }) => (
               <Form>
                 <Stack spacing={2.5}>
+                  {/* HOTEL NAME */}
                   <Field
                     as={TextField}
                     name="name"
@@ -336,6 +483,8 @@ const AdminHotel = () => {
                     error={touched.name && !!errors.name}
                     helperText={touched.name && errors.name}
                   />
+
+                  {/* LOCATION */}
                   <Field
                     as={TextField}
                     name="location"
@@ -345,18 +494,20 @@ const AdminHotel = () => {
                     error={touched.location && !!errors.location}
                     helperText={touched.location && errors.location}
                   />
+
+                  {/* PRICE */}
                   <Field
                     as={TextField}
                     name="price"
-                    label="Base Price ($)" // Label simple rakhein
+                    label="Base Price ($)"
                     type="number"
                     fullWidth
                     size="small"
-                    // Helper text se user ko clarity milegi
                     helperText="Enter amount in USD. It will be converted to INR (Rate: 1$ = ₹90) for customers."
                     error={touched.price && !!errors.price}
                   />
-                  {/* FIXED CATEGORY SELECT SECTION */}
+
+                  {/* CATEGORY */}
                   <TextField
                     select
                     label="Category (Mood)"
@@ -371,15 +522,15 @@ const AdminHotel = () => {
                     <MenuItem value="" disabled>
                       Select Mood
                     </MenuItem>
-                    {["nature", "urban", "ocean", "romantic", "royal"].map(
-                      (opt) => (
-                        <MenuItem key={opt} value={opt}>
-                          {opt.toUpperCase()}
-                        </MenuItem>
-                      ),
-                    )}
+
+                    {["nature", "urban", "ocean", "romantic", "royal"].map((option) => (
+                      <MenuItem key={option} value={option}>
+                        {option.toUpperCase()}
+                      </MenuItem>
+                    ))}
                   </TextField>
 
+                  {/* IMAGE UPLOAD */}
                   <Box
                     sx={{
                       border: "2px dashed",
@@ -393,27 +544,31 @@ const AdminHotel = () => {
                       type="file"
                       accept="image/*"
                       id="hotel-img"
-                      style={{ display: "none" }}
-                      onChange={(e) =>
-                        setFieldValue("image", e.currentTarget.files[0])
-                      }
+                      style={{
+                        display: "none",
+                      }}
+                      onChange={(e) => {
+                        const file = e.currentTarget.files?.[0];
+
+                        if (file) {
+                          setFieldValue("image", file);
+                        }
+                      }}
                     />
+
                     <label htmlFor="hotel-img">
-                      <Button
-                        component="span"
-                        variant="outlined"
-                        size="small"
-                        sx={{ mb: 1 }}
-                      >
+                      <Button component="span" variant="outlined" size="small" sx={{ mb: 1 }}>
                         Upload Image
                       </Button>
                     </label>
+
+                    {/* IMAGE PREVIEW */}
                     {values.image && (
                       <Box mt={1}>
                         <img
                           src={
                             typeof values.image === "string"
-                              ? values.image
+                              ? getImageUrl(values.image)
                               : URL.createObjectURL(values.image)
                           }
                           alt="preview"
@@ -428,6 +583,7 @@ const AdminHotel = () => {
                     )}
                   </Box>
 
+                  {/* SUBMIT */}
                   <Button
                     type="submit"
                     variant="contained"

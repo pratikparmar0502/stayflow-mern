@@ -1,3 +1,4 @@
+import API from "../../api/axios";
 import React, { useState, useContext, useEffect } from "react";
 import {
   Box,
@@ -8,25 +9,16 @@ import {
   Typography,
   Stack,
   IconButton,
-  InputAdornment,
   alpha,
   Zoom,
 } from "@mui/material";
-import {
-  Visibility,
-  VisibilityOff,
-  Email,
-  Lock,
-  Person,
-  ArrowForward,
-} from "@mui/icons-material";
+import { Visibility, VisibilityOff, Email, Lock, Person, ArrowForward } from "@mui/icons-material";
 import { useFormik } from "formik";
 import * as Yup from "yup";
 import { useHistory, useLocation } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { MoodContext } from "../../context/MoodContext";
-import api from "../../api/axios";
 
 const Auth = ({ onLogin }) => {
   const { mood } = useContext(MoodContext) || { mood: "default" };
@@ -66,71 +58,80 @@ const Auth = ({ onLogin }) => {
   const formik = useFormik({
     initialValues: { name: "", email: "", password: "" },
     validationSchema: Yup.object({
-      name: !isLogin
-        ? Yup.string().min(3, "Too short").required("Name is required")
-        : Yup.string(),
+      name: !isLogin ? Yup.string().min(3, "Too short").required("Name is required") : Yup.string(),
       email: Yup.string().email("Invalid email").required("Email is required"),
-      password: Yup.string()
-        .min(6, "Min 6 characters")
-        .required("Password is required"),
+      password: Yup.string().min(6, "Min 6 characters").required("Password is required"),
     }),
     onSubmit: async (values) => {
-      const loadToast = toast.loading(
-        isLogin ? "Signing in..." : "Creating account...",
-      );
+      const loadToast = toast.loading(isLogin ? "Signing in..." : "Creating account...");
+
       try {
-        // Sabse pehle saare users ko fetch karo check karne ke liye
-        const res = await api.get("/Users"); //
-        const users = res.data.Data || res.data.data || [];
-
+        // ==========================================
+        // LOGIN
+        // ==========================================
         if (isLogin) {
-          // --- LOGIN LOGIC ---
-          const user = users.find(
-            (u) => u.email === values.email && u.password === values.password,
-          );
-          if (user) {
-            localStorage.setItem("user", JSON.stringify(user));
-            localStorage.setItem("isLoggedIn", "true");
-            if (onLogin) onLogin(user); // State update here 🚀
+          const response = await API.post("/auth/login", {
+            email: values.email,
+            password: values.password,
+          });
 
-            toast.success(`Welcome!`, { id: loadToast });
+          const { token, user } = response.data;
 
-            if (values.email === "admin07@gmail.com") {
-              history.push("/admin");
-            } else {
-              history.push("/");
-            }
+          // Save JWT token
+          localStorage.setItem("token", token);
+
+          // Save logged-in user
+          localStorage.setItem("user", JSON.stringify(user));
+
+          // Existing project login flag
+          localStorage.setItem("isLoggedIn", "true");
+
+          // Update parent application state
+          if (onLogin) {
+            onLogin(user);
+          }
+
+          toast.success(`Welcome ${user.name}!`, {
+            id: loadToast,
+          });
+
+          // Navigate based on actual role
+          if (user.role === "admin") {
+            history.push("/admin");
           } else {
-            toast.error("Invalid credentials", { id: loadToast });
+            history.push("/");
           }
-        } else {
-          const emailExists = users.some((u) => u.email === values.email);
+        }
 
-          if (emailExists) {
-            toast.error("Email already registered! Please login.", {
-              id: loadToast,
-            });
-            return; // Yahan se function ruk jayega, POST nahi hoga
-          }
-
-          // SIGNUP
-          if (values.email === "admin07@gmail.com") {
-            toast.dismiss(loadToast);
-            toast.error("This email is reserved for Admin!");
-            return;
-          }
-
-          await api.post("/Users", {
+        // ==========================================
+        // SIGN UP
+        // ==========================================
+        else {
+          await API.post("/auth/register", {
             name: values.name,
             email: values.email,
             password: values.password,
           });
 
-          toast.success("Account Created! Please login.", { id: loadToast });
-          setTimeout(() => setIsLogin(true), 1500); // Switch to login UI
+          toast.success("Account created successfully! Please login.", {
+            id: loadToast,
+          });
+
+          // Switch back to login
+          setTimeout(() => {
+            setIsLogin(true);
+            formik.resetForm();
+            history.push("/login");
+          }, 1200);
         }
-      } catch (err) {
-        toast.error("API Connection Failed", { id: loadToast });
+      } catch (error) {
+        console.error(isLogin ? "Login error:" : "Registration error:", error);
+
+        const message = error.response?.data?.message || "Something went wrong. Please try again.";
+
+        toast.error(message, {
+          id: loadToast,
+        });
       }
     },
   });
@@ -173,9 +174,7 @@ const Auth = ({ onLogin }) => {
               {isLogin ? "Welcome Back" : "Join StayFlow"}
             </Typography>
             <Typography variant="body2" color="text.secondary" mb={4}>
-              {isLogin
-                ? "Enter details to access your account"
-                : "Sign up to start your journey"}
+              {isLogin ? "Enter details to access your account" : "Sign up to start your journey"}
             </Typography>
 
             <form onSubmit={formik.handleSubmit}>
@@ -189,9 +188,7 @@ const Auth = ({ onLogin }) => {
                     error={formik.touched.name && !!formik.errors.name}
                     helperText={formik.touched.name && formik.errors.name}
                     InputProps={{
-                      startAdornment: (
-                        <Person sx={{ mr: 1, color: moodColor }} />
-                      ),
+                      startAdornment: <Person sx={{ mr: 1, color: moodColor }} />,
                     }}
                   />
                 )}
@@ -217,9 +214,7 @@ const Auth = ({ onLogin }) => {
                   InputProps={{
                     startAdornment: <Lock sx={{ mr: 1, color: moodColor }} />,
                     endAdornment: (
-                      <IconButton
-                        onClick={() => setShowPassword(!showPassword)}
-                      >
+                      <IconButton onClick={() => setShowPassword(!showPassword)}>
                         {showPassword ? <VisibilityOff /> : <Visibility />}
                       </IconButton>
                     ),
@@ -253,13 +248,8 @@ const Auth = ({ onLogin }) => {
                 color: "text.secondary",
               }}
             >
-              {isLogin
-                ? "Don't have an account? "
-                : "Already have an account? "}
-              <Box
-                component="span"
-                sx={{ color: moodColor, fontWeight: "800" }}
-              >
+              {isLogin ? "Don't have an account? " : "Already have an account? "}
+              <Box component="span" sx={{ color: moodColor, fontWeight: "800" }}>
                 {isLogin ? "Sign Up" : "Log In"}
               </Box>
             </Typography>

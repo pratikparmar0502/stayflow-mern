@@ -243,9 +243,6 @@ const Home = () => {
         checkIn,
         checkOut,
 
-        // Final calculated amount
-        amount: Number(finalAmount),
-
         // Initial booking status
         status: "pending",
       };

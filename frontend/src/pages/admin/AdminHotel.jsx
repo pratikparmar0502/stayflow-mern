@@ -113,7 +113,7 @@ const AdminHotel = () => {
 
   // Existing pricing logic preserved.
   const displayPrice = (price) => {
-    return Number(price || 0) * 90;
+    return Number(price || 0).toLocaleString("en-IN");
   };
 
   // Add / Update hotel

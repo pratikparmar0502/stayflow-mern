@@ -1,4 +1,5 @@
 const Booking = require("../models/Booking");
+const Hotel = require("../models/Hotel");
 
 // ==========================================
 // GET ALL BOOKINGS
@@ -88,31 +89,73 @@ const getMyBookings = async (req, res) => {
 // ==========================================
 const createBooking = async (req, res) => {
   try {
-    const { hotel, hotelName, hotelImage, checkIn, checkOut, amount } = req.body;
+    const { hotel, hotelName, hotelImage, checkIn, checkOut, customerName } = req.body;
 
     // Basic validation
-    if (!hotelName || !checkIn || !checkOut || amount === undefined) {
+    if (!hotel || !checkIn || !checkOut) {
       return res.status(400).json({
         success: false,
-        message: "Hotel name, check-in, check-out and amount are required",
+        message: "Hotel, check-in and check-out are required",
       });
     }
+
+    // Find the actual hotel from MongoDB
+    const selectedHotel = await Hotel.findById(hotel);
+
+    if (!selectedHotel) {
+      return res.status(404).json({
+        success: false,
+        message: "Hotel not found",
+      });
+    }
+
+    // Validate booking dates
+    const checkInDate = new Date(checkIn);
+    const checkOutDate = new Date(checkOut);
+
+    if (Number.isNaN(checkInDate.getTime()) || Number.isNaN(checkOutDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid check-in or check-out date",
+      });
+    }
+
+    if (checkOutDate <= checkInDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Check-out date must be after check-in date",
+      });
+    }
+
+    // Calculate number of nights
+    const millisecondsPerDay = 1000 * 60 * 60 * 24;
+
+    const nights = Math.ceil((checkOutDate - checkInDate) / millisecondsPerDay);
+
+    // Calculate price from trusted database value
+    const roomAmount = selectedHotel.price * nights;
+
+    // 5% service fee
+    const serviceFee = Math.round(roomAmount * 0.05);
+
+    const finalAmount = roomAmount + serviceFee;
 
     // Create booking
     const booking = await Booking.create({
       user: req.user.id,
 
-      hotel: hotel || null,
+      hotel: selectedHotel._id,
 
-      customerName: req.body.customerName || "Guest",
+      customerName: customerName || req.user.name || req.user.email || "Guest",
 
-      hotelName,
-      hotelImage: hotelImage || "",
+      hotelName: selectedHotel.name,
 
-      checkIn,
-      checkOut,
+      hotelImage: selectedHotel.image || "",
 
-      amount,
+      checkIn: checkInDate,
+      checkOut: checkOutDate,
+
+      amount: finalAmount,
 
       status: "pending",
 

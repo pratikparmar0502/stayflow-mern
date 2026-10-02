@@ -261,7 +261,7 @@ const AdminBooking = () => {
    * backend amount × 90
    */
   const displayAmount = (amount) => {
-    return (Number(amount || 0) * 90).toLocaleString("en-IN");
+    return Number(amount || 0).toLocaleString("en-IN");
   };
 
   /*

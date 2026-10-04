@@ -22,6 +22,10 @@ import {
   Tooltip,
   useTheme,
   useMediaQuery,
+  DialogActions,
+  Dialog,
+  DialogTitle,
+  DialogContent,
 } from "@mui/material";
 
 import {
@@ -33,6 +37,7 @@ import {
   DoDisturbOn,
   DeleteForever,
   ImageNotSupported,
+  Visibility,
 } from "@mui/icons-material";
 
 import api from "../../api/axios";
@@ -43,6 +48,9 @@ const AdminBooking = () => {
   const [loading, setLoading] = useState(true);
 
   const [tabValue, setTabValue] = useState("all");
+
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [openDetails, setOpenDetails] = useState(false);
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -132,9 +140,10 @@ const AdminBooking = () => {
 
     confirmed: bookings.filter((booking) => booking.status?.toLowerCase() === "confirmed").length,
 
+    completed: bookings.filter((booking) => booking.status?.toLowerCase() === "completed").length,
+
     cancelled: bookings.filter((booking) => booking.status?.toLowerCase() === "cancelled").length,
   };
-
   /*
    * Delete booking
    *
@@ -164,24 +173,55 @@ const AdminBooking = () => {
       });
     }
   };
+  // ==========================================
+  // VIEW BOOKING DETAILS
+  // ==========================================
+  const handleViewDetails = (booking) => {
+    setSelectedBooking(booking);
+    setOpenDetails(true);
+  };
 
-  /*
-   * Update booking status.
-   *
-   * New backend accepts JSON, so we no longer need
-   * to download the hotel image and rebuild FormData.
-   *
-   * PATCH /api/bookings/:id
-   */
-  const updateStatus = async (id, newStatus) => {
-    const toastId = toast.loading(`Updating to ${newStatus}...`);
+  const handleCloseDetails = () => {
+    setOpenDetails(false);
+    setSelectedBooking(null);
+  };
+
+  // ==========================================
+  // UPDATE BOOKING STATUS
+  // ==========================================
+  // Admin status changes now use dedicated
+  // backend endpoints.
+  //
+  // pending   → confirmed
+  // pending   → cancelled
+  // confirmed → completed
+  const updateStatus = async (id, action) => {
+    const endpointMap = {
+      confirm: `/bookings/${id}/confirm`,
+      cancel: `/bookings/${id}/cancel`,
+      complete: `/bookings/${id}/complete`,
+    };
+
+    const messageMap = {
+      confirm: "Booking confirmed successfully!",
+      cancel: "Booking cancelled successfully!",
+      complete: "Booking completed successfully!",
+    };
+
+    const endpoint = endpointMap[action];
+
+    if (!endpoint) {
+      return;
+    }
+
+    const toastId = toast.loading(
+      `${action.charAt(0).toUpperCase() + action.slice(1)}ing booking...`,
+    );
 
     try {
-      await api.patch(`/bookings/${id}`, {
-        status: newStatus.toLowerCase(),
-      });
+      await api.patch(endpoint);
 
-      toast.success("Booking updated successfully!", {
+      toast.success(messageMap[action], {
         id: toastId,
       });
 
@@ -189,12 +229,11 @@ const AdminBooking = () => {
     } catch (error) {
       console.error("Update booking error:", error);
 
-      toast.error(error.response?.data?.message || "Update failed.", {
+      toast.error(error.response?.data?.message || "Booking update failed.", {
         id: toastId,
       });
     }
   };
-
   /*
    * Filter bookings by:
    *
@@ -254,12 +293,6 @@ const AdminBooking = () => {
     });
   };
 
-  /*
-   * Format booking amount.
-   *
-   * Existing project pricing logic is preserved:
-   * backend amount × 90
-   */
   const displayAmount = (amount) => {
     return Number(amount || 0).toLocaleString("en-IN");
   };
@@ -406,6 +439,8 @@ const AdminBooking = () => {
             <Tab label="Pending" value="pending" />
 
             <Tab label="Confirmed" value="confirmed" />
+
+            <Tab label="Completed" value="completed" />
 
             <Tab label="Cancelled" value="cancelled" />
           </Tabs>
@@ -614,7 +649,9 @@ const AdminBooking = () => {
                           ? "success"
                           : row.status === "cancelled"
                             ? "error"
-                            : "warning"
+                            : row.status === "completed"
+                              ? "info"
+                              : "warning"
                       }
                     />
                   </TableCell>
@@ -622,32 +659,67 @@ const AdminBooking = () => {
                   {/* ACTIONS */}
                   <TableCell align="right">
                     <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                      {/* CONFIRM */}
-                      <Tooltip title="Confirm">
+                      {/* ======================================
+VIEW BOOKING DETAILS
+====================================== */}
+                      <Tooltip title="View Booking Details">
                         <IconButton
                           size="small"
-                          onClick={() => updateStatus(row._id, "confirmed")}
-                          color="success"
-                          disabled={row.status === "confirmed"}
+                          onClick={() => handleViewDetails(row)}
+                          color="primary"
                         >
-                          <CheckCircle fontSize="small" />
+                          <Visibility fontSize="small" />
                         </IconButton>
                       </Tooltip>
+                      {/* ======================================
+        PENDING → CONFIRMED
+        ====================================== */}
+                      {row.status === "pending" && (
+                        <Tooltip title="Confirm Booking">
+                          <IconButton
+                            size="small"
+                            onClick={() => updateStatus(row._id, "confirm")}
+                            color="success"
+                          >
+                            <CheckCircle fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
 
-                      {/* CANCEL */}
-                      <Tooltip title="Cancel">
-                        <IconButton
-                          size="small"
-                          onClick={() => updateStatus(row._id, "cancelled")}
-                          color="warning"
-                          disabled={row.status === "cancelled"}
-                        >
-                          <Cancel fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
+                      {/* ======================================
+        PENDING → CANCELLED
+        ====================================== */}
+                      {row.status === "pending" && (
+                        <Tooltip title="Cancel Booking">
+                          <IconButton
+                            size="small"
+                            onClick={() => updateStatus(row._id, "cancel")}
+                            color="warning"
+                          >
+                            <Cancel fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
 
-                      {/* DELETE */}
-                      <Tooltip title="Delete">
+                      {/* ======================================
+        CONFIRMED → COMPLETED
+        ====================================== */}
+                      {row.status === "confirmed" && (
+                        <Tooltip title="Complete Booking">
+                          <IconButton
+                            size="small"
+                            onClick={() => updateStatus(row._id, "complete")}
+                            color="success"
+                          >
+                            <VerifiedUser fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+
+                      {/* ======================================
+        DELETE
+        ====================================== */}
+                      <Tooltip title="Delete Booking">
                         <IconButton
                           size="small"
                           onClick={() => deleteBooking(row._id)}
@@ -664,6 +736,172 @@ const AdminBooking = () => {
           </TableBody>
         </Table>
       </TableContainer>
+      {/* ==========================================
+    BOOKING DETAILS DIALOG
+========================================== */}
+      <Dialog open={openDetails} onClose={handleCloseDetails} fullWidth maxWidth="sm">
+        <DialogTitle>Booking Details</DialogTitle>
+
+        <DialogContent dividers>
+          {selectedBooking && (
+            <Stack spacing={2.5}>
+              {/* HOTEL */}
+              <Stack direction="row" spacing={2} alignItems="center">
+                <Avatar
+                  variant="rounded"
+                  src={getImageUrl(selectedBooking.hotelImage)}
+                  sx={{
+                    width: 80,
+                    height: 60,
+                    bgcolor: "#f1f5f9",
+                  }}
+                >
+                  <ImageNotSupported />
+                </Avatar>
+
+                <Box>
+                  <Typography variant="h6" fontWeight={800}>
+                    {selectedBooking.hotelName}
+                  </Typography>
+
+                  <Typography variant="body2" color="text.secondary">
+                    Hotel Booking
+                  </Typography>
+                </Box>
+              </Stack>
+
+              {/* BOOKING ID */}
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  Booking ID
+                </Typography>
+
+                <Typography variant="body2" fontWeight={700}>
+                  {selectedBooking._id}
+                </Typography>
+              </Box>
+
+              {/* CUSTOMER */}
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  Customer
+                </Typography>
+
+                <Typography variant="body1" fontWeight={700}>
+                  {selectedBooking.customerName || "Guest"}
+                </Typography>
+
+                {selectedBooking.user?.email && (
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedBooking.user.email}
+                  </Typography>
+                )}
+              </Box>
+
+              {/* DATES */}
+              <Stack
+                direction={{
+                  xs: "column",
+                  sm: "row",
+                }}
+                spacing={3}
+              >
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Check-in
+                  </Typography>
+
+                  <Typography variant="body1" fontWeight={700}>
+                    {formatDate(selectedBooking.checkIn)}
+                  </Typography>
+                </Box>
+
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Check-out
+                  </Typography>
+
+                  <Typography variant="body1" fontWeight={700}>
+                    {formatDate(selectedBooking.checkOut)}
+                  </Typography>
+                </Box>
+              </Stack>
+
+              {/* AMOUNT */}
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  Total Amount
+                </Typography>
+
+                <Typography variant="h6" fontWeight={900}>
+                  ₹ {displayAmount(selectedBooking.amount)}
+                </Typography>
+              </Box>
+
+              {/* STATUS */}
+              <Stack
+                direction={{
+                  xs: "column",
+                  sm: "row",
+                }}
+                spacing={2}
+              >
+                <Box>
+                  <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
+                    Booking Status
+                  </Typography>
+
+                  <Chip
+                    label={selectedBooking.status || "pending"}
+                    size="small"
+                    color={
+                      selectedBooking.status === "confirmed"
+                        ? "success"
+                        : selectedBooking.status === "cancelled"
+                          ? "error"
+                          : selectedBooking.status === "completed"
+                            ? "info"
+                            : "warning"
+                    }
+                    sx={{
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                    }}
+                  />
+                </Box>
+
+                <Box>
+                  <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
+                    Payment Status
+                  </Typography>
+
+                  <Chip
+                    label={selectedBooking.paymentStatus || "pending"}
+                    size="small"
+                    color={
+                      selectedBooking.paymentStatus === "paid"
+                        ? "success"
+                        : selectedBooking.paymentStatus === "failed"
+                          ? "error"
+                          : "warning"
+                    }
+                    sx={{
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                    }}
+                  />
+                </Box>
+              </Stack>
+            </Stack>
+          )}
+        </DialogContent>
+
+        <DialogActions>
+          <Button onClick={handleCloseDetails} variant="contained">
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

@@ -1,4 +1,5 @@
 import React, { useState, useContext, useEffect } from "react";
+import RazorpayCheckout from "@razorpay/razorpay-js/checkout";
 import { formatPrice } from "../../formatter.js";
 import {
   EventAvailable,
@@ -199,11 +200,14 @@ const Home = () => {
     return moodResult;
   })();
 
-  // --- 5. Booking Handler ---
   const handleQuickBook = async () => {
     try {
       setIsBooked(true);
-      // Get logged-in user information
+
+      // ==========================================
+      // 1. CHECK LOGIN
+      // ==========================================
+
       const storedUser = localStorage.getItem("user");
 
       if (!storedUser) {
@@ -214,7 +218,10 @@ const Home = () => {
 
       const user = JSON.parse(storedUser);
 
-      // Validate dates
+      // ==========================================
+      // 2. VALIDATE DATES
+      // ==========================================
+
       const checkInDate = new Date(checkIn);
       const checkOutDate = new Date(checkOut);
 
@@ -228,44 +235,131 @@ const Home = () => {
         return;
       }
 
-      // Prepare booking data
+      // ==========================================
+      // 3. CREATE BOOKING
+      // ==========================================
+
       const bookingData = {
         hotel: selectedHotel._id,
 
-        // Display information
         customerName: user.name || user.email || "Guest",
+
         hotelName: selectedHotel.name,
 
-        // Backend image path / URL
         hotelImage: getImageUrl(selectedHotel.image || selectedHotel.img),
 
-        // Booking dates
         checkIn,
         checkOut,
-
-        // Initial booking status
-        status: "pending",
       };
 
-      console.log("Booking data:", bookingData);
+      const bookingResponse = await api.post("/bookings", bookingData);
 
-      // Send booking to our new backend
-      // JWT is automatically attached by Axios interceptor
-      await api.post("/bookings", bookingData);
+      const booking = bookingResponse.data.booking;
 
-      toast.success("Booking Successfully!");
+      if (!booking?._id) {
+        throw new Error("Booking was created but booking ID is missing.");
+      }
 
-      setOpen(false);
+      // ==========================================
+      // 4. CREATE RAZORPAY ORDER
+      // ==========================================
 
-      // Redirect to user's bookings
-      history.push("/bookings");
+      const orderResponse = await api.post("/payments/create-order", {
+        bookingId: booking._id,
+      });
+
+      const { order, keyId } = orderResponse.data;
+
+      if (!order?.id || !keyId) {
+        throw new Error("Payment order could not be created.");
+      }
+
+      // ==========================================
+      // 5. OPEN RAZORPAY CHECKOUT
+      // ==========================================
+
+      const checkout = await RazorpayCheckout({
+        key: keyId,
+
+        order_id: order.id,
+
+        amount: order.amount,
+
+        currency: order.currency,
+
+        name: "StayFlow Hotels",
+
+        description: `Hotel booking - ${booking.hotelName}`,
+
+        prefill: {
+          name: user.name || "Guest",
+          email: user.email || "",
+        },
+
+        theme: {
+          color: themeColor,
+        },
+
+        handler: async (paymentResponse) => {
+          try {
+            setIsBooked(true);
+
+            // ==========================================
+            // 6. VERIFY PAYMENT ON BACKEND
+            // ==========================================
+
+            await api.post("/payments/verify", {
+              bookingId: booking._id,
+
+              razorpay_order_id: paymentResponse.razorpay_order_id,
+
+              razorpay_payment_id: paymentResponse.razorpay_payment_id,
+
+              razorpay_signature: paymentResponse.razorpay_signature,
+            });
+
+            toast.success("Payment successful! Booking created.");
+
+            setOpen(false);
+
+            history.push("/bookings");
+          } catch (error) {
+            console.error("Payment verification error:", error);
+
+            toast.error(error.response?.data?.message || "Payment verification failed.");
+          } finally {
+            setIsBooked(false);
+          }
+        },
+      });
+
+      // ==========================================
+      // PAYMENT FAILED
+      // ==========================================
+
+      checkout.on("payment.failed", (response) => {
+        console.error("Razorpay payment failed:", response);
+
+        toast.error(response.error?.description || "Payment failed. Please try again.");
+
+        setIsBooked(false);
+      });
+
+      // ==========================================
+      // OPEN CHECKOUT
+      // ==========================================
+
+      checkout.open();
     } catch (error) {
-      console.error("Booking error:", error);
+      console.error("Booking/payment error:", error);
 
-      const message = error.response?.data?.message || "Booking failed. Please try again.";
+      const message =
+        error.response?.data?.message ||
+        error.message ||
+        "Booking/payment failed. Please try again.";
 
       toast.error(message);
-    } finally {
+
       setIsBooked(false);
     }
   };

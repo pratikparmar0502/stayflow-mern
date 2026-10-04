@@ -5,8 +5,6 @@ const Hotel = require("../models/Hotel");
 // GET ALL BOOKINGS
 // ==========================================
 // Admin can use this to see all bookings.
-// Normal users will later get their own bookings
-// through a separate user-specific API.
 const getBookings = async (req, res) => {
   try {
     const bookings = await Booking.find()
@@ -143,13 +141,11 @@ const createBooking = async (req, res) => {
     // Create booking
     const booking = await Booking.create({
       user: req.user.id,
-
       hotel: selectedHotel._id,
 
       customerName: customerName || req.user.name || req.user.email || "Guest",
 
       hotelName: selectedHotel.name,
-
       hotelImage: selectedHotel.image || "",
 
       checkIn: checkInDate,
@@ -157,8 +153,10 @@ const createBooking = async (req, res) => {
 
       amount: finalAmount,
 
+      // Every new booking starts as pending.
       status: "pending",
 
+      // Payment is separate from booking status.
       paymentStatus: "pending",
     });
 
@@ -177,13 +175,15 @@ const createBooking = async (req, res) => {
 };
 
 // ==========================================
-// UPDATE BOOKING
+// CANCEL MY BOOKING
 // ==========================================
-const updateBooking = async (req, res) => {
+// A normal user can cancel only their own
+// booking.
+const cancelMyBooking = async (req, res) => {
   try {
-    const booking = await Booking.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
+    const booking = await Booking.findOne({
+      _id: req.params.id,
+      user: req.user.id,
     });
 
     if (!booking) {
@@ -193,15 +193,171 @@ const updateBooking = async (req, res) => {
       });
     }
 
+    if (booking.status === "cancelled") {
+      return res.status(400).json({
+        success: false,
+        message: "Booking is already cancelled",
+      });
+    }
+
+    if (booking.status === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Completed bookings cannot be cancelled",
+      });
+    }
+
+    booking.status = "cancelled";
+
+    await booking.save();
+
     res.json({
       success: true,
-      message: "Booking updated successfully",
+      message: "Booking cancelled successfully",
       booking,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Failed to update booking",
+      message: "Failed to cancel booking",
+      error: error.message,
+    });
+  }
+};
+
+// ==========================================
+// CONFIRM BOOKING
+// ==========================================
+// Allowed transition:
+//
+// pending → confirmed
+//
+// Any other transition is rejected.
+const confirmBooking = async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    // Only pending bookings can be confirmed.
+    if (booking.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot confirm a ${booking.status} booking`,
+      });
+    }
+
+    booking.status = "confirmed";
+
+    await booking.save();
+
+    res.json({
+      success: true,
+      message: "Booking confirmed successfully",
+      booking,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to confirm booking",
+      error: error.message,
+    });
+  }
+};
+
+// ==========================================
+// CANCEL BOOKING - ADMIN
+// ==========================================
+// Allowed transition:
+//
+// pending → cancelled
+//
+// A confirmed/completed/cancelled booking
+// cannot be cancelled through this admin action.
+const cancelBooking = async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    // Only pending bookings can be cancelled
+    // through the admin lifecycle.
+    if (booking.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot cancel a ${booking.status} booking`,
+      });
+    }
+
+    booking.status = "cancelled";
+
+    await booking.save();
+
+    res.json({
+      success: true,
+      message: "Booking cancelled successfully",
+      booking,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to cancel booking",
+      error: error.message,
+    });
+  }
+};
+
+// ==========================================
+// COMPLETE BOOKING
+// ==========================================
+// Allowed transition:
+//
+// confirmed → completed
+//
+// Pending/cancelled/completed bookings
+// cannot be completed.
+const completeBooking = async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    // Only confirmed bookings can be completed.
+    if (booking.status !== "confirmed") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot complete a ${booking.status} booking`,
+      });
+    }
+
+    booking.status = "completed";
+
+    await booking.save();
+
+    res.json({
+      success: true,
+      message: "Booking completed successfully",
+      booking,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to complete booking",
       error: error.message,
     });
   }
@@ -236,9 +392,15 @@ const deleteBooking = async (req, res) => {
 
 module.exports = {
   getBookings,
-  getMyBookings,
   getBookingById,
+  getMyBookings,
+  cancelMyBooking,
   createBooking,
-  updateBooking,
+
+  // Admin lifecycle actions
+  confirmBooking,
+  cancelBooking,
+  completeBooking,
+
   deleteBooking,
 };

@@ -11,7 +11,6 @@ const hotelRoutes = require("./routes/hotelRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
 const userRoutes = require("./routes/userRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
-const adminRoutes = require("./routes/adminRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 
 const app = express();
@@ -24,7 +23,6 @@ app.use("/api/hotels", hotelRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/dashboard", dashboardRoutes);
-app.use("/api/admin", adminRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 

@@ -244,11 +244,18 @@ const confirmBooking = async (req, res) => {
       });
     }
 
-    // Only pending bookings can be confirmed.
     if (booking.status !== "pending") {
       return res.status(400).json({
         success: false,
-        message: `Cannot confirm a ${booking.status} booking`,
+        message: "Only pending bookings can be confirmed",
+      });
+    }
+
+    // Payment must be completed before confirmation.
+    if (booking.paymentStatus !== "paid") {
+      return res.status(400).json({
+        success: false,
+        message: "Booking can be confirmed only after successful payment",
       });
     }
 
@@ -256,16 +263,17 @@ const confirmBooking = async (req, res) => {
 
     await booking.save();
 
-    res.json({
+    return res.json({
       success: true,
       message: "Booking confirmed successfully",
       booking,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Confirm booking error:", error);
+
+    return res.status(500).json({
       success: false,
       message: "Failed to confirm booking",
-      error: error.message,
     });
   }
 };

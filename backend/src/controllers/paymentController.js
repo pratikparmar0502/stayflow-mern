@@ -18,7 +18,6 @@ const createPaymentOrder = async (req, res) => {
       });
     }
 
-    // Find booking belonging to logged-in user
     const booking = await Booking.findOne({
       _id: bookingId,
       user: req.user.id,
@@ -31,7 +30,7 @@ const createPaymentOrder = async (req, res) => {
       });
     }
 
-    // Prevent payment for cancelled/completed bookings
+    // Cancelled bookings cannot be paid.
     if (booking.status === "cancelled") {
       return res.status(400).json({
         success: false,
@@ -39,6 +38,7 @@ const createPaymentOrder = async (req, res) => {
       });
     }
 
+    // Completed bookings cannot be paid again.
     if (booking.status === "completed") {
       return res.status(400).json({
         success: false,
@@ -46,7 +46,7 @@ const createPaymentOrder = async (req, res) => {
       });
     }
 
-    // Already paid
+    // A paid booking should never create another payment order.
     if (booking.paymentStatus === "paid") {
       return res.status(400).json({
         success: false,
@@ -54,8 +54,22 @@ const createPaymentOrder = async (req, res) => {
       });
     }
 
-    // Amount comes from trusted MongoDB booking.
-    // We do NOT trust amount sent by frontend.
+    // If an unpaid Razorpay order already exists,
+    // reuse it instead of creating another order.
+    if (booking.razorpayOrderId) {
+      return res.status(200).json({
+        success: true,
+        message: "Existing payment order retrieved",
+        order: {
+          id: booking.razorpayOrderId,
+          amount: Math.round(Number(booking.amount) * 100),
+          currency: "INR",
+        },
+        keyId: process.env.RAZORPAY_KEY_ID,
+        bookingId: booking._id,
+      });
+    }
+
     const amountInPaise = Math.round(Number(booking.amount) * 100);
 
     if (!amountInPaise || amountInPaise <= 0) {
@@ -75,23 +89,25 @@ const createPaymentOrder = async (req, res) => {
       },
     });
 
-    res.status(201).json({
+    // Store the Razorpay order ID against this booking.
+    booking.razorpayOrderId = order.id;
+    await booking.save();
+
+    return res.status(201).json({
       success: true,
       message: "Payment order created successfully",
-
       order: {
         id: order.id,
         amount: order.amount,
         currency: order.currency,
       },
-
       keyId: process.env.RAZORPAY_KEY_ID,
       bookingId: booking._id,
     });
   } catch (error) {
     console.error("Create payment order error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to create payment order",
     });
@@ -113,7 +129,6 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    // Find booking belonging to logged-in user
     const booking = await Booking.findOne({
       _id: bookingId,
       user: req.user.id,
@@ -126,16 +141,45 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    // Generate server-side signature.
+    // Do not verify payment again for an already-paid booking.
+    if (booking.paymentStatus === "paid") {
+      return res.status(400).json({
+        success: false,
+        message: "This booking is already paid",
+      });
+    }
+
+    // Make sure the Razorpay order belongs to this booking.
+    if (!booking.razorpayOrderId || booking.razorpayOrderId !== razorpay_order_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Razorpay order does not match this booking",
+      });
+    }
+
     const generatedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
       .digest("hex");
 
-    // Timing-safe comparison
+    const generatedSignatureBuffer = Buffer.from(generatedSignature);
+    const receivedSignatureBuffer = Buffer.from(razorpay_signature);
+
+    // timingSafeEqual throws when buffer lengths are different.
+    // Check the lengths first.
+    if (generatedSignatureBuffer.length !== receivedSignatureBuffer.length) {
+      booking.paymentStatus = "failed";
+      await booking.save();
+
+      return res.status(400).json({
+        success: false,
+        message: "Payment signature verification failed",
+      });
+    }
+
     const signaturesMatch = crypto.timingSafeEqual(
-      Buffer.from(generatedSignature),
-      Buffer.from(razorpay_signature),
+      generatedSignatureBuffer,
+      receivedSignatureBuffer,
     );
 
     if (!signaturesMatch) {
@@ -148,26 +192,27 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    // Payment successfully verified
+    // Payment is successfully verified.
     booking.paymentStatus = "paid";
     booking.paymentId = razorpay_payment_id;
 
     await booking.save();
 
-    res.json({
+    return res.json({
       success: true,
       message: "Payment verified successfully",
       booking: {
         id: booking._id,
         paymentStatus: booking.paymentStatus,
         paymentId: booking.paymentId,
+        razorpayOrderId: booking.razorpayOrderId,
         status: booking.status,
       },
     });
   } catch (error) {
     console.error("Payment verification error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Payment verification failed",
     });

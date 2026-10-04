@@ -33,7 +33,7 @@ const getDashboardStats = async (req, res) => {
     const revenueResult = await Booking.aggregate([
       {
         $match: {
-          status: "confirmed",
+          paymentStatus: "paid",
         },
       },
       {

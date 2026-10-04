@@ -63,6 +63,11 @@ const bookingSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+
+    razorpayOrderId: {
+      type: String,
+      default: "",
+    },
   },
   {
     timestamps: true,

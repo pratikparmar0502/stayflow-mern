@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import Home from "./pages/client/Home";
 // import Destination from "./pages/client/Destination";
 import Bookings from "./pages/client/Bookings";
+import Checkout from "./pages/client/Checkout";
 import About from "./pages/client/About";
 import Auth from "./pages/client/Auth";
 
@@ -142,8 +143,9 @@ const AppContent = ({ isLoggedIn, isAdmin, handleLogin, handleLogout }) => {
         </Route>
 
         {/* =================================================
-            CUSTOMER BOOKINGS
+            CUSTOMER BOOKINGS & CHECKOUT
         ================================================= */}
+        <Route path="/checkout">{isLoggedIn ? <Checkout /> : <Redirect to="/auth" />}</Route>
         <Route path="/bookings">{isLoggedIn ? <Bookings /> : <Redirect to="/auth" />}</Route>
 
         {/* =================================================

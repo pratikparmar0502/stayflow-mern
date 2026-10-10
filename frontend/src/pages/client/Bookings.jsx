@@ -239,6 +239,16 @@ const Bookings = () => {
           email: user.email || "",
         },
 
+        modal: {
+          ondismiss: () => {
+            toast("Payment was cancelled. Your booking is still pending payment.", {
+              icon: "ℹ️",
+              duration: 4000,
+            });
+            fetchMyBookings();
+          },
+        },
+
         handler: async (paymentResponse) => {
           try {
             await api.post("/payments/verify", {
@@ -251,19 +261,28 @@ const Bookings = () => {
               razorpay_signature: paymentResponse.razorpay_signature,
             });
 
-            toast.success("Payment successful!");
+            toast.success("Payment successful! Booking confirmed.");
 
             await fetchMyBookings();
+            if (openDetail) {
+              setOpenDetail(false);
+            }
           } catch (error) {
             console.error("Payment verification error:", error);
 
             toast.error(error.response?.data?.message || "Payment verification failed.");
+            await fetchMyBookings();
           }
         },
       });
 
       checkout.on("payment.failed", (response) => {
-        toast.error(response.error?.description || "Payment failed.");
+        console.error("Razorpay payment failed:", response);
+        toast.error(
+          response.error?.description ||
+            "Payment failed. Your booking remains pending payment."
+        );
+        fetchMyBookings();
       });
 
       checkout.open();
@@ -399,6 +418,12 @@ const Bookings = () => {
                         {booking.hotelName || "Hotel"}
                       </Typography>
 
+                      {booking.roomCategoryName && (
+                        <Typography variant="caption" sx={{ color: moodColor, fontWeight: 700, display: "block" }}>
+                          {booking.roomCategoryName} {booking.roomQuantity > 1 ? `(${booking.roomQuantity} rooms)` : ""}
+                        </Typography>
+                      )}
+
                       {booking.hotel?.location && (
                         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                           {booking.hotel.location}
@@ -435,12 +460,34 @@ const Bookings = () => {
 
                       <Divider sx={{ mb: 2 }} />
 
-                      <Typography variant="caption" color="text.secondary">
-                        Total Amount
-                      </Typography>
-                      <Typography variant="h5" fontWeight={900} sx={{ color: moodColor, mb: 2 }}>
-                        {formatPrice(booking.amount)}
-                      </Typography>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">
+                            Total Amount
+                          </Typography>
+                          <Typography variant="h5" fontWeight={900} sx={{ color: moodColor }}>
+                            {formatPrice(booking.amount)}
+                          </Typography>
+                        </Box>
+                        <Chip
+                          label={
+                            booking.paymentStatus === "paid"
+                              ? "Paid"
+                              : booking.paymentStatus === "failed"
+                              ? "Payment Failed"
+                              : "Payment Pending"
+                          }
+                          color={
+                            booking.paymentStatus === "paid"
+                              ? "success"
+                              : booking.paymentStatus === "failed"
+                              ? "error"
+                              : "warning"
+                          }
+                          size="small"
+                          sx={{ fontWeight: 700, fontSize: "0.75rem" }}
+                        />
+                      </Stack>
 
                       <Stack spacing={1.2}>
                         <Button
@@ -590,12 +637,44 @@ const Bookings = () => {
                         </Typography>
                       </Box>
 
+                      {selectedBooking.roomCategoryName && (
+                        <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
+                          <Typography color="text.secondary">Room Type</Typography>
+                          <Typography fontWeight={700}>
+                            {selectedBooking.roomCategoryName}{" "}
+                            {selectedBooking.roomQuantity > 1 ? `(${selectedBooking.roomQuantity} Rooms)` : ""}
+                          </Typography>
+                        </Box>
+                      )}
+
+                      {selectedBooking.guestCount && (
+                        <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
+                          <Typography color="text.secondary">Guests</Typography>
+                          <Typography fontWeight={700}>
+                            {selectedBooking.guestCount}
+                          </Typography>
+                        </Box>
+                      )}
+
                       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
-                        <Typography color="text.secondary">Payment</Typography>
+                        <Typography color="text.secondary">Payment Status</Typography>
                         <Chip
-                          label={selectedBooking.paymentStatus?.toUpperCase() || "PENDING"}
+                          label={
+                            selectedBooking.paymentStatus === "paid"
+                              ? "PAID"
+                              : selectedBooking.paymentStatus === "failed"
+                              ? "FAILED"
+                              : "PENDING PAYMENT"
+                          }
                           size="small"
-                          variant="outlined"
+                          color={
+                            selectedBooking.paymentStatus === "paid"
+                              ? "success"
+                              : selectedBooking.paymentStatus === "failed"
+                              ? "error"
+                              : "warning"
+                          }
+                          sx={{ fontWeight: 700 }}
                         />
                       </Box>
                     </Stack>

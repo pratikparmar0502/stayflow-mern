@@ -1,15 +1,17 @@
-import React, { useState, useContext, useEffect } from "react";
-import RazorpayCheckout from "@razorpay/razorpay-js/checkout";
+import React, { useState, useContext, useEffect, useMemo, useCallback } from "react";
 import { formatPrice } from "../../formatter.js";
+import { resolveAmenities } from "../../constants/amenities";
 import {
   EventAvailable,
   Star,
   Close,
   LocationOn,
-  Pool,
-  Wifi,
-  AcUnit,
   ArrowForwardRounded,
+  ChevronLeftRounded,
+  ChevronRightRounded,
+  Refresh,
+  ErrorOutline,
+  SearchOff,
 } from "@mui/icons-material";
 // import destination1 from "../../assets/destination/destination-1.avif";
 // import destination2 from "../../assets/destination/destination-2.avif";
@@ -17,7 +19,6 @@ import {
 // import destination4 from "../../assets/destination/destination-4.avif";
 // import destination5 from "../../assets/destination/destination-5.avif";
 // import destination6 from "../../assets/destination/destination-6.avif";
-import { SearchOff } from "@mui/icons-material";
 import natureHero from "../../assets/nature-hero.avif";
 import royalHero from "../../assets/royal-hero.avif";
 import urbanHero from "../../assets/urban-hero.avif";
@@ -45,12 +46,12 @@ import {
   MenuItem,
   CircularProgress,
   Backdrop,
-  Grid2,
+  Skeleton,
 } from "@mui/material";
 
 import { MoodContext } from "../../context/MoodContext.jsx";
 import { motion, AnimatePresence } from "framer-motion";
-import { useHistory } from "react-router-dom/cjs/react-router-dom.min.js";
+import { useHistory } from "react-router-dom";
 import api from "../../api/axios.js";
 import toast from "react-hot-toast";
 
@@ -84,12 +85,16 @@ const Home = () => {
   const [guests, setGuests] = useState(1);
   const [open, setOpen] = useState(false);
   const [selectedHotel, setSelectedHotel] = useState(null);
-  const [isBooked, setIsBooked] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   // API Data State
   const [hotels, setHotels] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Pagination / Carousel State (Max 6 cards per view)
+  const HOTELS_PER_PAGE = 6;
+  const [page, setPage] = useState(1);
 
   // --- 2. Helper Functions ---
   const calculateNights = (start, end) => {
@@ -107,266 +112,105 @@ const Home = () => {
   const finalAmount = totalPrice + serviceFee;
 
   // --- 3. API Fetching Logic ---
-  const fetchHotels = async () => {
+  const fetchHotels = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
 
-      // Fetch hotels from our new StayFlow backend
       const response = await api.get("/hotels");
-
-      // Backend response contains the hotels array
-      const fetchedData = response.data.hotels || [];
-
-      setHotels(fetchedData);
-    } catch (error) {
-      console.error("Error fetching hotels:", error);
-
+      setHotels(response.data.hotels || []);
+    } catch (err) {
+      console.error("Error fetching hotels:", err);
+      setError("Unable to load hotels. Please check your connection and try again.");
       toast.error("Failed to load hotels.");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchHotels();
-
-    // Jab bhi user is tab par wapas aaye, data refresh ho jaye
-    const handleFocus = () => {
-      fetchHotels();
+    let isMounted = true;
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const response = await api.get("/hotels");
+        if (isMounted) {
+          setHotels(response.data.hotels || []);
+        }
+      } catch (err) {
+        if (isMounted) {
+          console.error("Error fetching hotels:", err);
+          setError("Unable to load hotels. Please check your connection and try again.");
+          toast.error("Failed to load hotels.");
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
     };
-
-    window.addEventListener("focus", handleFocus);
-
+    load();
     return () => {
-      window.removeEventListener("focus", handleFocus);
+      isMounted = false;
     };
   }, []);
 
-  // --- 4. Main Logic: Filter Hotels (Ye hai sabse jaruri part) ---
-  // --- Updated Filter Logic ---
+  // --- 4. Main Logic: Filter Hotels ---
+  const displayedHotels = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
 
-  const displayedHotels = (() => {
-    const query = searchQuery.toLowerCase();
-
-    // 1. Pehle Search Filter (Name aur Location dono check honge)
+    // 1. Filter by search query (hotel name and location, safely handling nulls)
     const filteredBySearch = hotels.filter((hotel) => {
-      const hotelName = hotel.name?.toLowerCase() || "";
-      const hotelLoc = (hotel.location || hotel.loc)?.toLowerCase() || "";
+      if (!query) return true;
+      const hotelName = (hotel.name || "").toLowerCase();
+      const hotelLoc = (hotel.location || hotel.loc || "").toLowerCase();
       return hotelName.includes(query) || hotelLoc.includes(query);
     });
 
-    const activeMood = mood.toLowerCase();
+    const activeMood = (mood || "default").toLowerCase().trim();
 
-    // CASE 1: Default ya All (Yahan humein exactly 6 cards chahiye)
+    // CASE 1: Default or All — return full matching result set across all categories
     if (activeMood === "default" || activeMood === "all") {
-      // Apne categories ke sahi naam yahan check kar lena (Small letters me)
-      const categories = ["nature", "urban", "ocean", "romantic", "royal"];
-      let defaultSelection = [];
-
-      categories.forEach((cat, index) => {
-        // Isme hum check kar rahe hain ki category match ho rahi hai ya nahi
-        const catHotels = filteredBySearch.filter((h) => h.category?.toLowerCase().trim() === cat);
-
-        if (index < 4) {
-          // Nature, Urban, Ocean, Romantic se 1-1 photo
-          if (catHotels.length > 0) defaultSelection.push(catHotels[0]);
-        } else {
-          // Royal se 2 photos
-          if (catHotels.length > 0) defaultSelection.push(...catHotels.slice(0, 2));
-        }
-      });
-
-      // --- CRITICAL FIX ---
-      // Agar categories match nahi hui aur list 6 se kam hai, toh random hotels bhar do
-      if (defaultSelection.length < 6) {
-        const remaining = filteredBySearch.filter(
-          (h) => !defaultSelection.find((selected) => selected._id === h._id),
-        );
-        defaultSelection = [
-          ...defaultSelection,
-          ...remaining.slice(0, 6 - defaultSelection.length),
-        ];
-      }
-
-      return defaultSelection.slice(0, 6);
+      return filteredBySearch;
     }
 
-    // CASE 2: Specific Mood (Nature, Urban, etc.)
-    const moodResult = filteredBySearch.filter(
-      (hotel) => hotel.category?.toLowerCase().trim() === activeMood,
+    // CASE 2: Specific Mood (Nature, Urban, Ocean, Romantic, Royal)
+    return filteredBySearch.filter(
+      (hotel) => (hotel.category || "").toLowerCase().trim() === activeMood,
     );
+  }, [hotels, searchQuery, mood]);
 
-    // Agar specific mood me kuch na mile, toh khali page ki jagah wahi mood ke search results dikhao
-    return moodResult;
-  })();
+  // Reset pagination when mood or search changes
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, mood]);
 
-  const handleQuickBook = async () => {
-    try {
-      setIsBooked(true);
+  // Pagination calculation
+  const totalPages = Math.ceil(displayedHotels.length / HOTELS_PER_PAGE) || 1;
 
-      // ==========================================
-      // 1. CHECK LOGIN
-      // ==========================================
+  const paginatedHotels = useMemo(() => {
+    const startIndex = (page - 1) * HOTELS_PER_PAGE;
+    return displayedHotels.slice(startIndex, startIndex + HOTELS_PER_PAGE);
+  }, [displayedHotels, page]);
 
-      const storedUser = localStorage.getItem("user");
+  const handlePrevPage = () => {
+    setPage((prev) => Math.max(1, prev - 1));
+    document.getElementById("stays-section")?.scrollIntoView({ behavior: "smooth" });
+  };
 
-      if (!storedUser) {
-        toast.error("Please login before booking.");
-        history.push("/login");
-        return;
-      }
+  const handleNextPage = () => {
+    setPage((prev) => Math.min(totalPages, prev + 1));
+    document.getElementById("stays-section")?.scrollIntoView({ behavior: "smooth" });
+  };
 
-      const user = JSON.parse(storedUser);
-
-      // ==========================================
-      // 2. VALIDATE DATES
-      // ==========================================
-
-      const checkInDate = new Date(checkIn);
-      const checkOutDate = new Date(checkOut);
-
-      if (checkOutDate <= checkInDate) {
-        toast.error("Check-out date must be after check-in date.");
-        return;
-      }
-
-      if (!selectedHotel) {
-        toast.error("Please select a hotel.");
-        return;
-      }
-
-      // ==========================================
-      // 3. CREATE BOOKING
-      // ==========================================
-
-      const bookingData = {
-        hotel: selectedHotel._id,
-
-        customerName: user.name || user.email || "Guest",
-
-        hotelName: selectedHotel.name,
-
-        hotelImage: getImageUrl(selectedHotel.image || selectedHotel.img),
-
-        checkIn,
-        checkOut,
-      };
-
-      const bookingResponse = await api.post("/bookings", bookingData);
-
-      const booking = bookingResponse.data.booking;
-
-      if (!booking?._id) {
-        throw new Error("Booking was created but booking ID is missing.");
-      }
-
-      // ==========================================
-      // 4. CREATE RAZORPAY ORDER
-      // ==========================================
-
-      const orderResponse = await api.post("/payments/create-order", {
-        bookingId: booking._id,
-      });
-
-      const { order, keyId } = orderResponse.data;
-
-      if (!order?.id || !keyId) {
-        throw new Error("Payment order could not be created.");
-      }
-
-      // ==========================================
-      // 5. OPEN RAZORPAY CHECKOUT
-      // ==========================================
-
-      const checkout = await RazorpayCheckout({
-        key: keyId,
-
-        order_id: order.id,
-
-        amount: order.amount,
-
-        currency: order.currency,
-
-        name: "StayFlow Hotels",
-
-        description: `Hotel booking - ${booking.hotelName}`,
-
-        prefill: {
-          name: user.name || "Guest",
-          email: user.email || "",
-        },
-
-        theme: {
-          color: themeColor,
-        },
-
-        handler: async (paymentResponse) => {
-          try {
-            setIsBooked(true);
-
-            // ==========================================
-            // 6. VERIFY PAYMENT ON BACKEND
-            // ==========================================
-
-            await api.post("/payments/verify", {
-              bookingId: booking._id,
-
-              razorpay_order_id: paymentResponse.razorpay_order_id,
-
-              razorpay_payment_id: paymentResponse.razorpay_payment_id,
-
-              razorpay_signature: paymentResponse.razorpay_signature,
-            });
-
-            toast.success("Payment successful! Booking created.");
-
-            setOpen(false);
-
-            history.push("/bookings");
-          } catch (error) {
-            console.error("Payment verification error:", error);
-
-            toast.error(error.response?.data?.message || "Payment verification failed.");
-          } finally {
-            setIsBooked(false);
-          }
-        },
-      });
-
-      // ==========================================
-      // PAYMENT FAILED
-      // ==========================================
-
-      checkout.on("payment.failed", (response) => {
-        console.error("Razorpay payment failed:", response);
-
-        toast.error(response.error?.description || "Payment failed. Please try again.");
-
-        setIsBooked(false);
-      });
-
-      // ==========================================
-      // OPEN CHECKOUT
-      // ==========================================
-
-      checkout.open();
-    } catch (error) {
-      console.error("Booking/payment error:", error);
-
-      const message =
-        error.response?.data?.message ||
-        error.message ||
-        "Booking/payment failed. Please try again.";
-
-      toast.error(message);
-
-      setIsBooked(false);
-    }
+  const handleSearchSubmit = (e) => {
+    if (e) e.preventDefault();
+    document.getElementById("stays-section")?.scrollIntoView({ behavior: "smooth" });
   };
 
   const handleClose = () => {
     setOpen(false);
-    setIsBooked(false);
   };
 
   // --- 6. Styles & Themes ---
@@ -541,7 +385,8 @@ const Home = () => {
 
             {/* Search Box */}
             <Box
-              component={motion.div}
+              component={motion.form}
+              onSubmit={handleSearchSubmit}
               whileHover={{ scale: 1.02 }}
               sx={{
                 bgcolor: "white",
@@ -558,20 +403,33 @@ const Home = () => {
               <TextField
                 fullWidth
                 variant="standard"
-                placeholder="Where are you going?"
+                placeholder="Where are you going? (e.g. Munnar, Kerala, Goa)"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 InputProps={{
                   disableUnderline: true,
                   startAdornment: (
                     <InputAdornment position="start">
-                      <LocationOn color="primary" sx={{ ml: 2 }} />
+                      <LocationOn sx={{ ml: 2, color: getMoodColor(mood) }} />
                     </InputAdornment>
                   ),
+                  endAdornment: searchQuery ? (
+                    <InputAdornment position="end">
+                      <IconButton
+                        size="small"
+                        onClick={() => setSearchQuery("")}
+                        aria-label="Clear destination search"
+                        sx={{ mr: 1 }}
+                      >
+                        <Close fontSize="small" />
+                      </IconButton>
+                    </InputAdornment>
+                  ) : null,
                 }}
                 sx={{ px: 2 }}
               />
               <Button
+                type="submit"
                 variant="contained"
                 size="large"
                 sx={{
@@ -595,7 +453,7 @@ const Home = () => {
         </Box>
 
         {/* Main Content Stays */}
-        <Container sx={{ py: 7 }}>
+        <Container id="stays-section" sx={{ py: 7 }}>
           {/* Section Title */}
 
           <Box
@@ -648,8 +506,89 @@ const Home = () => {
             />
           </Box>
 
-          {/* No Results Message */}
-          {displayedHotels.length === 0 && (
+          {/* 1. Loading State: Skeleton Placeholders (6 responsive cards) */}
+          {loading && (
+            <Grid container spacing={4} sx={{ justifyContent: "center" }}>
+              {[...Array(6)].map((_, idx) => (
+                <Grid item xs={12} sm={6} md={4} key={`hotel-skeleton-${idx}`}>
+                  <Card
+                    sx={{
+                      borderRadius: "24px",
+                      overflow: "hidden",
+                      boxShadow: "0 12px 40px rgba(0,0,0,0.06)",
+                      border: "1px solid rgba(0,0,0,0.04)",
+                      height: "100%",
+                      display: "flex",
+                      flexDirection: "column",
+                    }}
+                  >
+                    <Skeleton variant="rectangular" height={220} animation="wave" />
+                    <CardContent sx={{ p: 2.5, flexGrow: 1, display: "flex", flexDirection: "column" }}>
+                      <Skeleton variant="text" height={32} width="80%" />
+                      <Skeleton variant="text" height={20} width="45%" sx={{ my: 1 }} />
+                      <Stack direction="row" spacing={3} sx={{ my: 1.5 }}>
+                        <Skeleton variant="text" width={45} />
+                        <Skeleton variant="text" width={45} />
+                        <Skeleton variant="text" width={45} />
+                      </Stack>
+                      <Divider sx={{ my: 2, opacity: 0.7 }} />
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mt: "auto" }}>
+                        <Skeleton variant="text" height={36} width={90} />
+                        <Skeleton variant="rounded" height={42} width={120} sx={{ borderRadius: "12px" }} />
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))}
+            </Grid>
+          )}
+
+          {/* 2. Error State with Retry */}
+          {!loading && error && (
+            <Box
+              component={motion.div}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              sx={{
+                textAlign: "center",
+                py: 8,
+                px: 2,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              }}
+            >
+              <ErrorOutline sx={{ fontSize: 70, color: "#ef4444", mb: 2 }} />
+              <Typography variant="h5" fontWeight="bold" color="text.primary" gutterBottom>
+                Something went wrong
+              </Typography>
+              <Typography variant="body1" color="text.secondary" sx={{ mb: 3, maxWidth: 500 }}>
+                {error}
+              </Typography>
+              <Button
+                variant="contained"
+                startIcon={<Refresh />}
+                onClick={fetchHotels}
+                sx={{
+                  borderRadius: "20px",
+                  bgcolor: getMoodColor(mood),
+                  px: 4,
+                  py: 1.2,
+                  fontWeight: "bold",
+                  textTransform: "none",
+                  "&:hover": {
+                    bgcolor: getMoodColor(mood),
+                    filter: "brightness(0.9)",
+                  },
+                }}
+              >
+                Retry
+              </Button>
+            </Box>
+          )}
+
+          {/* 3. Empty State */}
+          {!loading && !error && displayedHotels.length === 0 && (
             <Box
               component={motion.div}
               initial={{ opacity: 0, y: 20 }}
@@ -687,212 +626,268 @@ const Home = () => {
             </Box>
           )}
 
-          {/* Hotel Cards Grid */}
-          <Grid2
-            container
-            spacing={4}
-            sx={{ justifyContent: "center" }}
-            component={motion.div} // Grid ko motion banaya
-            variants={containerVariants}
-            initial="hidden"
-            animate="visible"
-            key={mood + searchQuery}
-          >
-            {displayedHotels.map((hotel) => (
-              <Grid item xs={12} sm={6} md={4} key={hotel._id}>
-                <Box
-                  component={motion.div}
-                  variants={cardVariants}
-                  whileHover={{ y: -12 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <Card
+          {/* 4. Hotel Cards Grid (Max 6 per view, using paginatedHotels) */}
+          {!loading && !error && displayedHotels.length > 0 && (
+            <>
+              <Grid
+                container
+                spacing={4}
+                sx={{ justifyContent: "center" }}
+                component={motion.div}
+                variants={containerVariants}
+                initial="hidden"
+                animate="visible"
+              >
+                {paginatedHotels.map((hotel) => (
+                  <Grid item xs={12} sm={6} md={4} key={hotel._id}>
+                    <Box
+                      component={motion.div}
+                      variants={cardVariants}
+                      whileHover={{ y: -12 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <Card
+                        sx={{
+                          borderRadius: "24px",
+                          overflow: "hidden",
+                          boxShadow: "0 12px 40px rgba(0,0,0,0.06)",
+                          border: "1px solid rgba(0,0,0,0.04)",
+                          borderColor: `${getMoodColor(mood)}20`,
+                          height: "100%",
+                          display: "flex",
+                          flexDirection: "column",
+                          transition: "transform 0.3s ease, box-shadow 0.3s ease",
+                          "&:hover": {
+                            boxShadow: `0 20px 40px ${getMoodColor(mood)}15`,
+                          },
+                        }}
+                      >
+                        <Box sx={{ position: "relative", height: "220px" }}>
+                          <CardMedia
+                            component="img"
+                            src={getImageUrl(hotel.image || hotel.img)}
+                            loading="lazy"
+                            onError={(e) => {
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src = defaultHero;
+                            }}
+                            sx={{
+                              height: "100%",
+                              objectFit: "cover",
+                              transition: "opacity 0.5s",
+                            }}
+                          />
+                        </Box>
+
+                        <CardContent
+                          sx={{
+                            p: 2.5,
+                            flexGrow: 1,
+                            display: "flex",
+                            flexDirection: "column",
+                          }}
+                        >
+                          {/* Hotel Name */}
+                          <Typography variant="h6" fontWeight="800" noWrap>
+                            {hotel.name}
+                          </Typography>
+
+                          {/* Location */}
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={0.5}
+                            sx={{ color: "text.secondary", mb: 2, mt: 1 }}
+                          >
+                            <LocationOn sx={{ fontSize: "0.9rem" }} />
+                            <Typography variant="caption" fontWeight="600">
+                              {hotel.location || hotel.loc}
+                            </Typography>
+                          </Stack>
+
+                          {/* ------------- Amenities ------------- */}
+                          <Stack direction="row" spacing={1.5} sx={{ my: 1, color: "text.secondary", flexWrap: "wrap", minHeight: "28px", alignItems: "center" }}>
+                            {resolveAmenities(hotel.amenities).length > 0 ? (
+                              resolveAmenities(hotel.amenities).slice(0, 3).map((item) => (
+                                <Box
+                                  key={item.id}
+                                  sx={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 0.5,
+                                    fontSize: "0.8rem",
+                                  }}
+                                >
+                                  <span>{item.emoji}</span>
+                                  <Typography variant="caption" fontWeight="500">
+                                    {item.label}
+                                  </Typography>
+                                </Box>
+                              ))
+                            ) : (
+                              <Typography variant="caption" color="text.secondary" sx={{ fontStyle: "italic" }}>
+                                Standard amenities included
+                              </Typography>
+                            )}
+                          </Stack>
+
+                          <Divider sx={{ my: 2, opacity: 0.7 }} />
+
+                          {/* Price and Book Now */}
+                          <Box
+                            sx={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              mt: "auto",
+                            }}
+                          >
+                            {/* Left Side: Price */}
+                            <Box sx={{ display: "flex", alignItems: "baseline" }}>
+                              <Typography
+                                variant="h5"
+                                fontWeight="900"
+                                sx={{ color: getMoodColor(mood) }}
+                              >
+                                {formatPrice(hotel.price)}
+                              </Typography>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  ml: 0.5,
+                                  fontWeight: 700,
+                                  color: "text.secondary",
+                                }}
+                              >
+                                / night
+                              </Typography>
+                            </Box>
+
+                            {/* Right Side: Details Button */}
+                            <Button
+                              variant="contained"
+                              size="medium"
+                              endIcon={<ArrowForwardRounded />}
+                              onClick={() => {
+                                setSelectedHotel(hotel);
+                                setOpen(true);
+                              }}
+                              disableElevation
+                              sx={{
+                                bgcolor: getMoodColor(mood),
+                                color: "#fff",
+                                textTransform: "none",
+                                fontWeight: "bold",
+                                borderRadius: "12px",
+                                px: 3,
+                                py: 1,
+                                boxShadow: `0 4px 14px ${getMoodColor(mood)}50`,
+                                transition: "all 0.3s ease",
+                                "&:hover": {
+                                  bgcolor: getMoodColor(mood),
+                                  transform: "translateY(-2px)",
+                                  boxShadow: `0 8px 20px ${getMoodColor(mood)}70`,
+                                },
+                                "&:active": {
+                                  transform: "translateY(0)",
+                                },
+                              }}
+                            >
+                              Book Now
+                            </Button>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    </Box>
+                  </Grid>
+                ))}
+              </Grid>
+
+              {/* 5. Carousel / Pagination Controls */}
+              <Box
+                sx={{
+                  mt: 6,
+                  display: "flex",
+                  flexDirection: { xs: "column", sm: "row" },
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 2,
+                  p: 2,
+                  borderRadius: "20px",
+                  bgcolor: "white",
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.04)",
+                  border: "1px solid rgba(0,0,0,0.06)",
+                }}
+              >
+                <Typography variant="body2" color="text.secondary" fontWeight="600">
+                  Showing{" "}
+                  <Box component="span" sx={{ color: getMoodColor(mood), fontWeight: "bold" }}>
+                    {(page - 1) * HOTELS_PER_PAGE + 1}–
+                    {Math.min(page * HOTELS_PER_PAGE, displayedHotels.length)}
+                  </Box>{" "}
+                  of {displayedHotels.length} available stays
+                </Typography>
+
+                <Stack direction="row" spacing={1.5} alignItems="center">
+                  <Button
+                    variant="outlined"
+                    size="medium"
+                    startIcon={<ChevronLeftRounded />}
+                    disabled={page <= 1}
+                    onClick={handlePrevPage}
                     sx={{
-                      borderRadius: "24px",
-                      overflow: "hidden",
-                      boxShadow: "0 12px 40px rgba(0,0,0,0.06)",
-                      border: "1px solid rgba(0,0,0,0.04)",
-                      borderColor: `${getMoodColor(mood)}20`,
-                      height: "100%",
-                      display: "flex",
-                      flexDirection: "column",
-                      transition: "transform 0.3s ease, box-shadow 0.3s ease",
+                      borderRadius: "14px",
+                      textTransform: "none",
+                      fontWeight: "bold",
+                      borderColor: page <= 1 ? "inherit" : `${getMoodColor(mood)}60`,
+                      color: page <= 1 ? "inherit" : getMoodColor(mood),
                       "&:hover": {
-                        boxShadow: `0 20px 40px ${getMoodColor(mood)}15`,
+                        borderColor: getMoodColor(mood),
+                        bgcolor: `${getMoodColor(mood)}10`,
                       },
                     }}
                   >
-                    <Box sx={{ position: "relative", height: "220px" }}>
-                      <CardMedia
-                        component="img"
-                        src={getImageUrl(hotel.image || hotel.img)}
-                        sx={{
-                          height: "100%",
-                          objectFit: "cover",
-                          transition: "opacity 0.5s",
-                        }}
-                      />
-                      {/* <Box
-                        sx={{
-                          position: "absolute",
-                          top: 15,
-                          right: 15,
-                          bgcolor: "rgba(255,255,255,0.9)",
-                          px: 1.2,
-                          py: 0.4,
-                          borderRadius: "10px",
-                          display: "flex",
-                          alignItems: "center",
-                        }}
-                      ></Box> */}
-                    </Box>
+                    Previous
+                  </Button>
 
-                    <CardContent
-                      sx={{
-                        p: 2.5,
-                        flexGrow: 1,
-                        display: "flex",
-                        flexDirection: "column",
-                      }}
-                    >
-                      {/* Hotel Name */}
-                      <Typography variant="h6" fontWeight="800" noWrap>
-                        {hotel.name}
-                      </Typography>
+                  <Box
+                    sx={{
+                      px: 2,
+                      py: 0.8,
+                      borderRadius: "12px",
+                      bgcolor: `${getMoodColor(mood)}15`,
+                      color: getMoodColor(mood),
+                      fontWeight: "800",
+                      fontSize: "0.9rem",
+                    }}
+                  >
+                    {page} / {totalPages}
+                  </Box>
 
-                      {/* Location */}
-                      <Stack
-                        direction="row"
-                        alignItems="center"
-                        spacing={0.5}
-                        sx={{ color: "text.secondary", mb: 2, mt: 1 }}
-                      >
-                        <LocationOn sx={{ fontSize: "0.9rem" }} />
-                        <Typography variant="caption" fontWeight="600">
-                          {hotel.location || hotel.loc}
-                        </Typography>
-                      </Stack>
-
-                      {/* ------------- Amenities ------------- */}
-                      <Stack direction="row" spacing={3} sx={{ my: 1, color: "text.secondary" }}>
-                        {/* Wifi Icon */}
-                        <Box
-                          sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 0.5,
-                          }}
-                        >
-                          <Wifi fontSize="small" sx={{ fontSize: "1.1rem" }} />
-                          <Typography variant="caption" fontWeight="500">
-                            Wifi
-                          </Typography>
-                        </Box>
-
-                        {/* Pool Icon (Sirf dikhane ke liye) */}
-                        <Box
-                          sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 0.5,
-                          }}
-                        >
-                          <Pool fontSize="small" sx={{ fontSize: "1.1rem" }} />
-                          <Typography variant="caption" fontWeight="500">
-                            Pool
-                          </Typography>
-                        </Box>
-
-                        {/* AC Icon */}
-                        <Box
-                          sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 0.5,
-                          }}
-                        >
-                          <AcUnit fontSize="small" sx={{ fontSize: "1.1rem" }} />
-                          <Typography variant="caption" fontWeight="500">
-                            AC
-                          </Typography>
-                        </Box>
-                      </Stack>
-
-                      <Divider sx={{ my: 2, opacity: 0.7 }} />
-
-                      {/* Price and Book Now */}
-                      <Box
-                        sx={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          mt: "auto",
-                        }}
-                      >
-                        {/* Left Side: Price */}
-                        <Box sx={{ display: "flex", alignItems: "baseline" }}>
-                          <Typography
-                            variant="h5"
-                            fontWeight="900"
-                            sx={{ color: getMoodColor(mood) }}
-                          >
-                            {formatPrice(hotel.price)}
-                          </Typography>
-                          <Typography
-                            variant="caption"
-                            sx={{
-                              ml: 0.5,
-                              fontWeight: 700,
-                              color: "text.secondary",
-                            }}
-                          >
-                            / night
-                          </Typography>
-                        </Box>
-
-                        {/* Right Side: Details Button */}
-                        <Button
-                          variant="contained"
-                          size="medium" // Large bohot bada ho jata hai card me, medium perfect hai
-                          endIcon={<ArrowForwardRounded />} // Arrow se user ko "Go" wali feeling aati hai
-                          onClick={() => {
-                            setSelectedHotel(hotel);
-                            setOpen(true);
-                          }}
-                          disableElevation // Default shadow hatayi, hum custom shadow denge
-                          sx={{
-                            bgcolor: getMoodColor(mood),
-                            color: "#fff",
-                            textTransform: "none",
-                            fontWeight: "bold",
-                            borderRadius: "12px",
-                            px: 3,
-                            py: 1,
-                            // Default State: Halki colored shadow
-                            boxShadow: `0 4px 14px ${getMoodColor(mood)}50`,
-                            transition: "all 0.3s ease", // Smooth animation
-
-                            "&:hover": {
-                              bgcolor: getMoodColor(mood),
-                              // Button thoda upar uthega
-                              transform: "translateY(-2px)",
-                              // Shadow strong aur glow karegi
-                              boxShadow: `0 8px 20px ${getMoodColor(mood)}70`,
-                            },
-                            "&:active": {
-                              transform: "translateY(0)", // Click karne wapas niche
-                            },
-                          }}
-                        >
-                          Book Now
-                        </Button>
-                      </Box>
-                    </CardContent>
-                  </Card>
-                </Box>
-              </Grid>
-            ))}
-          </Grid2>
+                  <Button
+                    variant="outlined"
+                    size="medium"
+                    endIcon={<ChevronRightRounded />}
+                    disabled={page >= totalPages}
+                    onClick={handleNextPage}
+                    sx={{
+                      borderRadius: "14px",
+                      textTransform: "none",
+                      fontWeight: "bold",
+                      borderColor: page >= totalPages ? "inherit" : `${getMoodColor(mood)}60`,
+                      color: page >= totalPages ? "inherit" : getMoodColor(mood),
+                      "&:hover": {
+                        borderColor: getMoodColor(mood),
+                        bgcolor: `${getMoodColor(mood)}10`,
+                      },
+                    }}
+                  >
+                    Next
+                  </Button>
+                </Stack>
+              </Box>
+            </>
+          )}
         </Container>
         {/* Hotel Details Modal */}
         <Modal
@@ -974,6 +969,10 @@ const Home = () => {
                       <img
                         src={getImageUrl(selectedHotel.image || selectedHotel.img)}
                         alt={selectedHotel.name}
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = defaultHero;
+                        }}
                         style={{
                           width: "100%",
                           height: "100%",
@@ -1067,9 +1066,6 @@ const Home = () => {
                               }}
                             >
                               <Typography
-                                inputProps={{
-                                  min: checkIn || new Date().toISOString().split("T")[0],
-                                }}
                                 variant="caption"
                                 fontWeight="700"
                                 color="text.secondary"
@@ -1188,44 +1184,42 @@ const Home = () => {
                         <Typography variant="h6" fontWeight="800" sx={{ mb: 3 }}>
                           What this place offers
                         </Typography>
-                        <Grid container spacing={2}>
-                          {[
-                            { label: "Wifi", emoji: "📶" },
-                            { label: "Pool", emoji: "🏊‍♂️" },
-                            { label: "AC", emoji: "❄️" },
-                            { label: "Kitchen", emoji: "🍳" },
-                            { label: "Parking", emoji: "🅿️" },
-                            { label: "Spa", emoji: "💆" },
-                            { label: "Breakfast", emoji: "🍽️" },
-                            { label: "Pets", emoji: "🐾" },
-                          ].map((item) => (
-                            <Grid item xs={6} sm={3} key={item.label}>
-                              <Box
-                                sx={{
-                                  p: 2,
-                                  borderRadius: "16px",
-                                  bgcolor: "white",
-                                  border: "1px solid #f1f5f9",
-                                  textAlign: "center",
-                                  // cursor: "pointer",
-                                  transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                                  "&:hover": {
-                                    transform: "translateY(-4px)",
-                                    boxShadow: "0 10px 20px rgba(0,0,0,0.05)",
-                                    borderColor: themeColor,
-                                  },
-                                }}
-                              >
-                                <Typography variant="h5" sx={{ mb: 1 }}>
-                                  {item.emoji}
-                                </Typography>
-                                <Typography variant="body2" fontWeight="600" color="text.secondary">
-                                  {item.label}
-                                </Typography>
-                              </Box>
-                            </Grid>
-                          ))}
-                        </Grid>
+                        {resolveAmenities(selectedHotel.amenities).length > 0 ? (
+                          <Grid container spacing={2}>
+                            {resolveAmenities(selectedHotel.amenities).map((item) => (
+                              <Grid item xs={6} sm={3} key={item.id}>
+                                <Box
+                                  sx={{
+                                    p: 2,
+                                    borderRadius: "16px",
+                                    bgcolor: "white",
+                                    border: "1px solid #f1f5f9",
+                                    textAlign: "center",
+                                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                                    "&:hover": {
+                                      transform: "translateY(-4px)",
+                                      boxShadow: "0 10px 20px rgba(0,0,0,0.05)",
+                                      borderColor: themeColor,
+                                    },
+                                  }}
+                                >
+                                  <Typography variant="h5" sx={{ mb: 1 }}>
+                                    {item.emoji}
+                                  </Typography>
+                                  <Typography variant="body2" fontWeight="600" color="text.secondary">
+                                    {item.label}
+                                  </Typography>
+                                </Box>
+                              </Grid>
+                            ))}
+                          </Grid>
+                        ) : (
+                          <Box sx={{ p: 3, borderRadius: "16px", bgcolor: "#f8fafc", textAlign: "center" }}>
+                            <Typography variant="body2" color="text.secondary">
+                              No specific amenities listed for this stay. Contact hotel for special requests.
+                            </Typography>
+                          </Box>
+                        )}
                       </Box>
                     </Box>
                   </Box>
@@ -1282,7 +1276,28 @@ const Home = () => {
                               history.push("/login");
                               return;
                             }
-                            handleQuickBook();
+                            if (!checkIn || !checkOut) {
+                              toast.error("Please select check-in and check-out dates.");
+                              return;
+                            }
+                            const checkInDate = new Date(checkIn);
+                            const checkOutDate = new Date(checkOut);
+                            if (checkOutDate <= checkInDate) {
+                              toast.error("Check-out date must be after check-in date.");
+                              return;
+                            }
+
+                            // Close modal and navigate to dedicated /checkout page
+                            setOpen(false);
+                            history.push({
+                              pathname: "/checkout",
+                              state: {
+                                hotel: selectedHotel,
+                                checkIn,
+                                checkOut,
+                                guests,
+                              },
+                            });
                           }}
                           sx={{
                             bgcolor: themeColor,
@@ -1296,7 +1311,7 @@ const Home = () => {
                             },
                           }}
                         >
-                          {isBooked ? "Processing..." : "Book Now"}{" "}
+                          Proceed to Checkout
                         </Button>
                       </Grid>
                     </Grid>

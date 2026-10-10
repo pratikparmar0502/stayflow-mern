@@ -550,7 +550,15 @@ const AdminBooking = () => {
                   fontWeight: 700,
                 }}
               >
-                Status
+                Booking Status
+              </TableCell>
+
+              <TableCell
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
+                Payment
               </TableCell>
 
               <TableCell
@@ -568,7 +576,7 @@ const AdminBooking = () => {
             {filteredBookings.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={6}
+                  colSpan={7}
                   align="center"
                   sx={{
                     py: 6,
@@ -595,9 +603,16 @@ const AdminBooking = () => {
                         <ImageNotSupported />
                       </Avatar>
 
-                      <Typography variant="body2" fontWeight={700}>
-                        {row.hotelName}
-                      </Typography>
+                      <Box>
+                        <Typography variant="body2" fontWeight={700}>
+                          {row.hotelName}
+                        </Typography>
+                        {row.roomCategoryName && (
+                          <Typography variant="caption" color="primary" fontWeight={600} display="block">
+                            {row.roomCategoryName} {row.roomQuantity > 1 ? `(${row.roomQuantity} rooms)` : ""}
+                          </Typography>
+                        )}
+                      </Box>
                     </Stack>
                   </TableCell>
 
@@ -634,7 +649,7 @@ const AdminBooking = () => {
                     </Typography>
                   </TableCell>
 
-                  {/* STATUS */}
+                  {/* BOOKING STATUS */}
                   <TableCell>
                     <Chip
                       label={row.status || "pending"}
@@ -652,6 +667,31 @@ const AdminBooking = () => {
                             : row.status === "completed"
                               ? "info"
                               : "warning"
+                      }
+                    />
+                  </TableCell>
+
+                  {/* PAYMENT STATUS */}
+                  <TableCell>
+                    <Chip
+                      label={
+                        row.paymentStatus === "paid"
+                          ? "PAID"
+                          : row.paymentStatus === "failed"
+                          ? "FAILED"
+                          : "PENDING"
+                      }
+                      size="small"
+                      sx={{
+                        fontWeight: 700,
+                        fontSize: "10px",
+                      }}
+                      color={
+                        row.paymentStatus === "paid"
+                          ? "success"
+                          : row.paymentStatus === "failed"
+                          ? "error"
+                          : "warning"
                       }
                     />
                   </TableCell>
@@ -826,6 +866,18 @@ VIEW BOOKING DETAILS
                   </Typography>
                 </Box>
               </Stack>
+
+              {/* ROOM TYPE IF PRESENT */}
+              {selectedBooking.roomCategoryName && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Room Type & Quantity
+                  </Typography>
+                  <Typography variant="body1" fontWeight={700}>
+                    {selectedBooking.roomCategoryName} ({selectedBooking.roomQuantity || 1} Room{selectedBooking.roomQuantity > 1 ? "s" : ""})
+                  </Typography>
+                </Box>
+              )}
 
               {/* AMOUNT */}
               <Box>

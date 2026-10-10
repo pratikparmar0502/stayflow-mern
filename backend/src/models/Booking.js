@@ -68,6 +68,63 @@ const bookingSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+
+    // =========================================================
+    // ROOM BOOKING SNAPSHOT FIELDS (optional / backward-compatible)
+    // Stored at booking time so that later admin price changes
+    // do not alter the historical record.
+    // =========================================================
+
+    // Room category sub-document ID within the hotel
+    roomCategoryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+
+    // Human-readable snapshot of the room category name
+    roomCategoryName: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    // Price per night at the time of booking
+    roomPricePerNight: {
+      type: Number,
+      default: null,
+    },
+
+    // Number of rooms booked
+    roomQuantity: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+
+    // Number of nights (calculated server-side)
+    nights: {
+      type: Number,
+      default: null,
+    },
+
+    // Guest count submitted by user
+    guestCount: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+
+    // Room subtotal before service fee
+    roomSubtotal: {
+      type: Number,
+      default: null,
+    },
+
+    // Service fee amount
+    serviceFee: {
+      type: Number,
+      default: null,
+    },
   },
   {
     timestamps: true,

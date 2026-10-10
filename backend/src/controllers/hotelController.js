@@ -50,7 +50,7 @@ const getHotelById = async (req, res) => {
 // Create hotel
 const createHotel = async (req, res) => {
   try {
-    const { name, location, price, rate, status, category } = req.body;
+    const { name, location, price, rate, status, category, amenities, roomCategories } = req.body;
 
     if (!name || !location || price === undefined) {
       return res.status(400).json({
@@ -62,6 +62,29 @@ const createHotel = async (req, res) => {
     // If an image was uploaded, create its API URL
     const image = req.file ? `/uploads/${req.file.filename}` : "";
 
+    // Parse amenities: accept JSON string or array
+    let parsedAmenities = [];
+    if (amenities) {
+      try {
+        parsedAmenities = typeof amenities === "string" ? JSON.parse(amenities) : amenities;
+        if (!Array.isArray(parsedAmenities)) parsedAmenities = [];
+      } catch {
+        parsedAmenities = [];
+      }
+    }
+
+    // Parse roomCategories: accept JSON string or array
+    let parsedRoomCategories = [];
+    if (roomCategories) {
+      try {
+        parsedRoomCategories =
+          typeof roomCategories === "string" ? JSON.parse(roomCategories) : roomCategories;
+        if (!Array.isArray(parsedRoomCategories)) parsedRoomCategories = [];
+      } catch {
+        parsedRoomCategories = [];
+      }
+    }
+
     const hotel = await Hotel.create({
       name,
       location,
@@ -70,6 +93,8 @@ const createHotel = async (req, res) => {
       status,
       image,
       category,
+      amenities: parsedAmenities,
+      roomCategories: parsedRoomCategories,
     });
 
     res.status(201).json({
@@ -97,6 +122,34 @@ const updateHotel = async (req, res) => {
     // Only replace image if a new image was uploaded
     if (req.file) {
       updateData.image = `/uploads/${req.file.filename}`;
+    }
+
+    // Parse amenities if present
+    if (updateData.amenities !== undefined) {
+      try {
+        if (typeof updateData.amenities === "string") {
+          updateData.amenities = JSON.parse(updateData.amenities);
+        }
+        if (!Array.isArray(updateData.amenities)) {
+          updateData.amenities = [];
+        }
+      } catch {
+        updateData.amenities = [];
+      }
+    }
+
+    // Parse roomCategories if present
+    if (updateData.roomCategories !== undefined) {
+      try {
+        if (typeof updateData.roomCategories === "string") {
+          updateData.roomCategories = JSON.parse(updateData.roomCategories);
+        }
+        if (!Array.isArray(updateData.roomCategories)) {
+          updateData.roomCategories = [];
+        }
+      } catch {
+        updateData.roomCategories = [];
+      }
     }
 
     const hotel = await Hotel.findByIdAndUpdate(req.params.id, updateData, {

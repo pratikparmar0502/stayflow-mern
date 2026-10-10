@@ -85,9 +85,21 @@ const getMyBookings = async (req, res) => {
 // ==========================================
 // CREATE BOOKING
 // ==========================================
+// Server-authoritative pricing.
+// The client sends hotel ID, room category ID,
+// dates, guest count, and room quantity.
+// Everything else is calculated here from DB data.
 const createBooking = async (req, res) => {
   try {
-    const { hotel, hotelName, hotelImage, checkIn, checkOut, customerName } = req.body;
+    const {
+      hotel,
+      checkIn,
+      checkOut,
+      customerName,
+      roomCategoryId,
+      roomQuantity: rawRoomQty,
+      guestCount: rawGuestCount,
+    } = req.body;
 
     // Basic validation
     if (!hotel || !checkIn || !checkOut) {
@@ -118,6 +130,16 @@ const createBooking = async (req, res) => {
       });
     }
 
+    // Check-in must not be in the past (compare date only, not time)
+    const todayStr = new Date().toISOString().split("T")[0];
+    const checkInStr = checkInDate.toISOString().split("T")[0];
+    if (checkInStr < todayStr) {
+      return res.status(400).json({
+        success: false,
+        message: "Check-in date cannot be in the past",
+      });
+    }
+
     if (checkOutDate <= checkInDate) {
       return res.status(400).json({
         success: false,
@@ -125,18 +147,88 @@ const createBooking = async (req, res) => {
       });
     }
 
-    // Calculate number of nights
+    // Calculate number of nights (server-side, authoritative)
     const millisecondsPerDay = 1000 * 60 * 60 * 24;
-
     const nights = Math.ceil((checkOutDate - checkInDate) / millisecondsPerDay);
 
-    // Calculate price from trusted database value
-    const roomAmount = selectedHotel.price * nights;
+    if (nights < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Booking must be for at least one night",
+      });
+    }
 
-    // 5% service fee
-    const serviceFee = Math.round(roomAmount * 0.05);
+    // ======================================================
+    // ROOM CATEGORY RESOLUTION
+    // ======================================================
+    // If a roomCategoryId was provided, validate it against
+    // the hotel's embedded categories.
+    // If no roomCategoryId, fall back to the hotel base price
+    // for backward-compatibility with older bookings.
+    // ======================================================
 
-    const finalAmount = roomAmount + serviceFee;
+    let pricePerNight;
+    let roomCatName = "";
+    let roomCatIdToStore = null;
+    let resolvedMaxOccupancy = null;
+
+    const roomQty = Math.max(1, parseInt(rawRoomQty, 10) || 1);
+    const guestCount = Math.max(1, parseInt(rawGuestCount, 10) || 1);
+
+    if (roomCategoryId) {
+      // Find the category within the hotel's embedded array
+      const cat = selectedHotel.roomCategories
+        ? selectedHotel.roomCategories.find(
+            (c) => c._id.toString() === roomCategoryId && c.isActive !== false,
+          )
+        : null;
+
+      if (!cat) {
+        return res.status(400).json({
+          success: false,
+          message: "Room category not found or not available for this hotel",
+        });
+      }
+
+      // Validate room quantity
+      if (roomQty > cat.totalRooms) {
+        return res.status(400).json({
+          success: false,
+          message: `Only ${cat.totalRooms} room(s) of this category are available`,
+        });
+      }
+
+      // Validate guest count against occupancy
+      // Rule: total guests must not exceed (maxOccupancy × roomQuantity)
+      resolvedMaxOccupancy = cat.maxOccupancy;
+      const maxAllowedGuests = cat.maxOccupancy * roomQty;
+      if (guestCount > maxAllowedGuests) {
+        return res.status(400).json({
+          success: false,
+          message: `Guest count (${guestCount}) exceeds the maximum occupancy for ${roomQty} room(s) of this category (${maxAllowedGuests} guests max)`,
+        });
+      }
+
+      pricePerNight = cat.pricePerNight;
+      roomCatName = cat.name;
+      roomCatIdToStore = cat._id;
+    } else {
+      // No room category: use hotel base price (legacy behavior)
+      pricePerNight = selectedHotel.price;
+      roomCatName = "";
+      roomCatIdToStore = null;
+    }
+
+    // ======================================================
+    // SERVER-AUTHORITATIVE PRICING
+    // Never trust client-submitted price, subtotal, or total.
+    // ======================================================
+
+    const roomSubtotal = pricePerNight * roomQty * nights;
+
+    // 5% service fee (consistent with existing implementation)
+    const serviceFee = Math.round(roomSubtotal * 0.05);
+    const finalAmount = roomSubtotal + serviceFee;
 
     // Create booking
     const booking = await Booking.create({
@@ -151,6 +243,7 @@ const createBooking = async (req, res) => {
       checkIn: checkInDate,
       checkOut: checkOutDate,
 
+      // Server-calculated final amount (what Razorpay will charge)
       amount: finalAmount,
 
       // Every new booking starts as pending.
@@ -158,12 +251,32 @@ const createBooking = async (req, res) => {
 
       // Payment is separate from booking status.
       paymentStatus: "pending",
+
+      // Room booking snapshot
+      roomCategoryId: roomCatIdToStore,
+      roomCategoryName: roomCatName,
+      roomPricePerNight: pricePerNight,
+      roomQuantity: roomQty,
+      nights,
+      guestCount,
+      roomSubtotal,
+      serviceFee,
     });
 
     res.status(201).json({
       success: true,
       message: "Booking created successfully",
       booking,
+      // Return pricing breakdown for checkout confirmation
+      pricingBreakdown: {
+        pricePerNight,
+        roomQuantity: roomQty,
+        nights,
+        roomSubtotal,
+        serviceFee,
+        finalAmount,
+        roomCategoryName: roomCatName,
+      },
     });
   } catch (error) {
     res.status(500).json({

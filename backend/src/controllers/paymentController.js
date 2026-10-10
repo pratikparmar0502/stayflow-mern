@@ -196,6 +196,11 @@ const verifyPayment = async (req, res) => {
     booking.paymentStatus = "paid";
     booking.paymentId = razorpay_payment_id;
 
+    // Transition pending booking to confirmed on successful verified payment
+    if (booking.status === "pending") {
+      booking.status = "confirmed";
+    }
+
     await booking.save();
 
     return res.json({
